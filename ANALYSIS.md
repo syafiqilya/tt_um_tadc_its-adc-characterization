@@ -39,8 +39,8 @@ Expected results include:
 
 ## 3. Capture real hardware data
 
-Connect and program the FPGA as described in `README.md`. Find the Cmod A7 UART
-port in Windows Device Manager, then run:
+Connect the complete bench as described in `WIRING.md`, then program the FPGA.
+Find the Cmod A7 UART port in Windows Device Manager, then run:
 
 ```powershell
 python pc/capture_tadc.py COM6 -o timing_capture.csv
@@ -112,9 +112,9 @@ and avoids collisions through the requested harmonic order.
 
 The calculator makes the nominal frequencies coherent, but two independent
 oscillators still drift. For a repeatable rectangular-window FFT, lock the
-function generator and FPGA/ADC timing to the same reference. If the generator
-has a 10 MHz reference input, confirm its voltage requirements before connecting
-an FPGA clock output.
+function generator and FPGA/ADC timing to the same reference. The current FPGA
+build does not expose its internal 10 MHz clock; adding that output requires an
+RTL and XDC revision. See `WIRING.md` before making any reference connection.
 
 If there is no shared reference, use the automatic Blackman-Harris window and
 treat the measurement as noncoherent.

@@ -41,6 +41,11 @@ Two clock constraints and MMCM configurations are supplied:
 
 ## Wiring
 
+See [WIRING.md](WIRING.md) for the complete bench diagram, digital connection
+table, Tiny Tapeout analog pin locations, two-channel and single-channel
+function-generator setups, grounding, voltage limits, clock-coherence notes,
+and the recommended power-up sequence.
+
 Connect all grounds before connecting signals. Stop the Tiny Tapeout
 demoboard's own project clock and ensure its RP2040 is not driving the same
 input lines as the FPGA.
