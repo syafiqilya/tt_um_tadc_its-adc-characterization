@@ -162,6 +162,22 @@ python pc/capture_tadc.py COM6 -o tadc_capture.csv
 
 Replace `COM6` with the Cmod A7 FTDI UART port shown by Windows.
 
+The receiver also writes `tadc_capture.meta.json` beside the CSV. Keep both
+files together so the analysis tools know the exact FPGA clock frequencies.
+
+## Timing, coherent-frequency, and FFT analysis
+
+The project includes ready-to-run PC tools for:
+
+- checking conversion cadence, jitter, missing events, and unstable data;
+- calculating a coherent function-generator frequency from measured timing;
+- plotting the FFT and calculating SNR, SINAD, THD, SFDR, and ENOB;
+- generating a synthetic capture to verify the installation without hardware.
+
+See [ANALYSIS.md](ANALYSIS.md) for installation, the hardware measurement
+workflow, exact commands, output files, clock-coherence requirements, and
+troubleshooting.
+
 ## Simulation
 
 The supplied testbench bypasses the Xilinx MMCM and drives the design with a

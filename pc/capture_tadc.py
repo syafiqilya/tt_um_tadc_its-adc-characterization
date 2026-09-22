@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import struct
 import sys
 from pathlib import Path
@@ -39,6 +40,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("port", help="COM port, for example COM6")
     parser.add_argument("-o", "--output", type=Path, default=Path("tadc_capture.csv"))
+    parser.add_argument(
+        "--metadata",
+        type=Path,
+        help="metadata JSON path (default: <output>.meta.json)",
+    )
     parser.add_argument("--baud", type=int, default=1_000_000)
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
@@ -87,6 +93,19 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
 
+    metadata_path = args.metadata or args.output.with_suffix(".meta.json")
+    metadata = {
+        "schema": "tadc-capture-v1",
+        "format_version": version,
+        "record_size_bytes": record_size,
+        "record_count": count,
+        "system_clock_hz": system_hz,
+        "adc_clock_hz": adc_hz,
+        "counter_tick_seconds": 1.0 / system_hz,
+        "source_csv": args.output.name,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
     periods = [row["period_ticks"] for row in rows[1:]] or [rows[0]["period_ticks"]]
     unstable_count = sum(row["unstable"] for row in rows)
     print(f"Received {count} samples")
@@ -94,6 +113,7 @@ def main() -> int:
     print(f"Period ticks: min={min(periods)}, max={max(periods)}")
     print(f"Unstable data flags: {unstable_count}")
     print(f"Saved {args.output.resolve()}")
+    print(f"Saved {metadata_path.resolve()}")
     return 0
 
 

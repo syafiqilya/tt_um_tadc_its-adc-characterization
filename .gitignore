@@ -13,7 +13,13 @@ build/
 *.str
 
 # Python runtime output and captured measurements
+.venv/
 __pycache__/
 *.py[cod]
 *.csv
-
+*.meta.json
+*_fft.json
+*_fft.png
+*_timing.json
+*_timing.png
+*_tone.json
