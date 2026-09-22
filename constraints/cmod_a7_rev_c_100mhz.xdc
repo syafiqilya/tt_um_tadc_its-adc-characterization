@@ -1,0 +1,25 @@
+## Use this file only if the oscillator fitted to your board is 100 MHz.
+set_property -dict { PACKAGE_PIN L17 IOSTANDARD LVCMOS33 } [get_ports { sysclk }]
+create_clock -add -name sys_clk_pin -period 10.000 -waveform {0 5.000} [get_ports { sysclk }]
+
+set_property -dict { PACKAGE_PIN A18 IOSTANDARD LVCMOS33 } [get_ports { btn_reset }]
+set_property -dict { PACKAGE_PIN B18 IOSTANDARD LVCMOS33 } [get_ports { btn_start }]
+set_property -dict { PACKAGE_PIN A17 IOSTANDARD LVCMOS33 } [get_ports { led[0] }]
+set_property -dict { PACKAGE_PIN C16 IOSTANDARD LVCMOS33 } [get_ports { led[1] }]
+
+set_property -dict { PACKAGE_PIN G17 IOSTANDARD LVCMOS33 } [get_ports { adc_cko }]
+set_property -dict { PACKAGE_PIN G19 IOSTANDARD LVCMOS33 } [get_ports { adc_data[8] }]
+set_property -dict { PACKAGE_PIN N18 IOSTANDARD LVCMOS33 } [get_ports { adc_data[7] }]
+set_property -dict { PACKAGE_PIN L18 IOSTANDARD LVCMOS33 } [get_ports { adc_data[6] }]
+set_property -dict { PACKAGE_PIN H17 IOSTANDARD LVCMOS33 } [get_ports { adc_data[5] }]
+set_property -dict { PACKAGE_PIN H19 IOSTANDARD LVCMOS33 } [get_ports { adc_data[4] }]
+set_property -dict { PACKAGE_PIN J19 IOSTANDARD LVCMOS33 } [get_ports { adc_data[3] }]
+set_property -dict { PACKAGE_PIN K18 IOSTANDARD LVCMOS33 } [get_ports { adc_data[2] }]
+set_property -dict { PACKAGE_PIN M3  IOSTANDARD LVCMOS33 } [get_ports { adc_data[1] }]
+set_property -dict { PACKAGE_PIN L3  IOSTANDARD LVCMOS33 } [get_ports { adc_data[0] }]
+set_property -dict { PACKAGE_PIN A16 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports { adc_clk }]
+set_property -dict { PACKAGE_PIN K3  IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports { adc_en }]
+set_property -dict { PACKAGE_PIN J17 IOSTANDARD LVCMOS33 } [get_ports { uart_txd_in }]
+
+set_false_path -from [get_ports { adc_cko }]
+set_false_path -from [get_ports { adc_data[*] }]

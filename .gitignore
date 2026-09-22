@@ -1,0 +1,19 @@
+# Vivado generated files and directories
+.Xil/
+build/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.xpr
+*.jou
+*.log
+*.str
+
+# Python runtime output and captured measurements
+__pycache__/
+*.py[cod]
+*.csv
+
