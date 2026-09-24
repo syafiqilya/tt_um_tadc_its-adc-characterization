@@ -13,6 +13,9 @@ series resistor on each input.
 References:
 
 - [Tiny Tapeout project page](https://www.tinytapeout.com/chips/ttsky25b/tt_um_tadc_its)
+- [Tiny Tapeout demoboard quickstart](https://www.tinytapeout.com/guides/get-started-demoboard/)
+- [Tiny Tapeout external-control example](https://tinytapeout.com/guides/analog-discovery/)
+- [Tiny Tapeout MicroPython firmware](https://github.com/TinyTapeout/tt-micropython-firmware)
 - [Original ADC repository](https://github.com/mthudaa/its_10b_tadc)
 - [Published ADC transient testbench](https://github.com/mthudaa/its_10b_tadc/blob/main/xschem/adc_tb.sch)
 - [Cmod A7 constraints used by this project](constraints/cmod_a7_rev_b_12mhz.xdc)
@@ -49,6 +52,55 @@ References:
 The Cmod A7 USB connection supplies the FPGA, programs it, and carries the
 captured UART data. No separate USB-to-UART wiring is required.
 
+## Which device controls what?
+
+The Tiny Tapeout carrier-board RP2040/RP2350 still powers and selects the
+`tt_um_tadc_its` project. After the carrier has selected the project and
+released its project I/O, the Cmod A7 controls the ADC `clk` and `EN`, reads
+`CKO` and `DATA[8:0]`, counts the timing, and sends the capture to the PC.
+
+The supplied FPGA design does **not** drive Tiny Tapeout's project-selection
+management signals (`ctrl_ena`, `ctrl_sel_inc`, or `ctrl_sel_rst_n`) and does
+not automatically configure the carrier-board controller. This division is
+intentional: use the carrier for project selection and the FPGA for the actual
+ADC measurement.
+
+## Required carrier-board setup
+
+Do this before allowing the FPGA to drive PIO3 (`clk`) or PIO4 (`EN`). Power
+the Tiny Tapeout carrier through its normal USB connector, open its MicroPython
+REPL, and enter:
+
+```python
+from ttboard.mode import RPMode
+
+tt.shuttle.tt_um_tadc_its.enable()
+tt.clock_project_stop()
+tt.mode = RPMode.ASIC_MANUAL_INPUTS
+tt.reset_project(False)
+```
+
+Select the project first and then set `ASIC_MANUAL_INPUTS`, because selecting a
+project can load its configured operating mode. Manual-input mode stops the
+RP2040-generated project clock and releases the ordinary project inputs so
+external hardware can drive them. Keep the board out of `ASIC_RP_CONTROL`
+while the FPGA is connected to `clk` and `EN`.
+
+On carrier/firmware versions that support manual-clock monitoring, also use:
+
+```python
+tt.manual_project_clock.monitoring = False
+```
+
+This prevents the carrier's manual-clock handler from generating a clock edge
+during FPGA control. If the named project attribute is unavailable, locate the
+installed name with `tt.shuttle.find("tadc")` and enable the returned project.
+
+Never permit the RP2040 and FPGA to drive the same net simultaneously. For the
+first bring-up, keep PIO3 and PIO4 disconnected (or keep the Cmod A7 unpowered)
+until the commands above have completed. Leave the carrier DIP-switch inputs
+off and do not attach another input-driving PMOD at the same time.
+
 ## Digital wiring
 
 Use short jumper wires. Connect a ground wire before connecting any signal
@@ -74,9 +126,8 @@ The FPGA and Tiny Tapeout digital interfaces are 3.3 V logic. Do not insert a
 5 V logic source. Do not connect the Cmod A7 3.3 V supply pin to an ADC analog
 input.
 
-Before connecting PIO3 or PIO4, stop the Tiny Tapeout demoboard's automatic
-project clock and ensure its RP2040 is not driving the same project inputs.
-Two outputs driving one wire can damage a board.
+Before connecting PIO3 or PIO4, complete **Required carrier-board setup**
+above. Two outputs driving one wire can damage a board.
 
 `DATA[1:0]` deserve special attention. The submitted ADC schematic does not
 clearly drive Tiny Tapeout `uio_oe[1:0]` high. If these two bits do not move in
@@ -165,12 +216,15 @@ connect an arbitrary Cmod pin to the reference input.
 1. Turn off the function-generator outputs and unplug both boards.
 2. Connect Cmod A7 ground, Tiny Tapeout ground, generator grounds, and the
    0.9 V reference return.
-3. Connect the digital wires exactly as listed above.
+3. Leave the FPGA-to-Tiny-Tapeout signal wires disconnected for first setup.
 4. Connect `VCM`, `VIP`, and `VIN` through the analog network.
 5. Check for accidental shorts with a multimeter.
-6. Power the Tiny Tapeout demoboard and select `tt_um_tadc_its`.
-7. Disable the demoboard project clock and conflicting RP2040 pin drivers.
-8. Connect/program the Cmod A7 through USB.
+6. Power the Tiny Tapeout demoboard through USB.
+7. Run all commands in **Required carrier-board setup** above. Confirm that the
+   project is selected, the carrier clock is stopped, and manual-input mode is
+   active.
+8. With both boards sharing ground, connect the digital signal wires exactly
+   as listed above, then connect/program the Cmod A7 through USB.
 9. With ADC `EN` low, enable the analog source and scope `VCM`, `VIP`, and
    `VIN`; confirm they remain between 0 and 1.8 V.
 10. Start `capture_tadc.py`, press Cmod A7 BTN1, and inspect the first capture's

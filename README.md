@@ -48,7 +48,8 @@ and the recommended power-up sequence.
 
 Connect all grounds before connecting signals. Stop the Tiny Tapeout
 demoboard's own project clock and ensure its RP2040 is not driving the same
-input lines as the FPGA.
+input lines as the FPGA. The exact carrier-board MicroPython commands and safe
+connection order are in [Required carrier-board setup](WIRING.md#required-carrier-board-setup).
 
 | Cmod A7 connection | FPGA package pin | Tiny Tapeout signal | ADC function |
 |---|---:|---|---|
@@ -71,9 +72,11 @@ inside the ADC's approximately 0–1.8 V analog range.
 
 ## Operation
 
-1. Select `tt_um_tadc_its` on the Tiny Tapeout demoboard.
-2. Stop the demoboard's automatic project clock.
-3. Connect the FPGA and ADC digital signals and common ground.
+1. With FPGA `clk` and `EN` not yet connected, select `tt_um_tadc_its` on the
+   Tiny Tapeout demoboard.
+2. Stop the carrier clock and select `ASIC_MANUAL_INPUTS` using the exact
+   commands in [WIRING.md](WIRING.md#required-carrier-board-setup).
+3. Connect common ground first, then the FPGA/ADC digital signals.
 4. Program the Cmod A7.
 5. Open the PC receiver at 1,000,000 baud.
 6. Press Cmod A7 BTN1.
@@ -81,6 +84,10 @@ inside the ADC's approximately 0–1.8 V analog range.
 8. The ADC is disabled and LED2 turns on while the block is transmitted.
 9. LED2 remains on after completion. Press BTN1 to acquire another block.
 10. BTN0 resets the controller.
+
+The FPGA controls the ADC clock and enable only after this handoff. It does not
+select the Tiny Tapeout project, control the carrier board, power either board,
+or automatically place the carrier RP2040/RP2350 in manual-input mode.
 
 The first record measures time from FPGA `EN` assertion to the first
 synchronized `CKO`. Later records measure time between successive `CKO`
