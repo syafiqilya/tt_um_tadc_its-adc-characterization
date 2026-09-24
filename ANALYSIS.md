@@ -48,12 +48,46 @@ python pc/capture_tadc.py COM6 -o timing_capture.csv
 
 Press Cmod A7 BTN1 when requested. Replace `COM6` with the real port.
 
+On Linux, list the detected ports before capture:
+
+```bash
+python pc/capture_tadc.py --list-ports
+ls -l /dev/serial/by-id/
+python pc/capture_tadc.py /dev/ttyUSB1 -o timing_capture.csv
+```
+
+Prefer the stable `/dev/serial/by-id/...` name when available. The Cmod's FTDI
+device provides independent JTAG and UART functions, so do not assume that the
+lowest `/dev/ttyUSB*` number is the UART interface.
+
 The receiver creates two files:
 
 - `timing_capture.csv`: one row per ADC result;
 - `timing_capture.meta.json`: the FPGA clocks and capture format.
 
 Keep these two files together.
+
+The receiver waits indefinitely for the `TADC` header by default, allowing time
+to press BTN1 and inspect the hardware. To impose a 30-second limit, add
+`--wait-timeout 30`. The separate `--timeout` option controls how long an
+already-started UART stream may stall.
+
+### If no UART bytes arrive
+
+Use the Cmod LEDs to locate the stage that stopped:
+
+- LED1 never turns on after BTN1: check the programmed bitstream, BTN1, reset,
+  and the correct 12 MHz/100 MHz board constraint selection.
+- LED1 remains on: the FPGA has started, but has not collected 4096 `CKO`
+  events. Check Tiny Tapeout project selection, its disabled onboard clock,
+  FPGA `clk`/`EN`, `CKO`, common ground, and signal directions.
+- LED2 turns on: acquisition completed and UART transmission started. If the PC
+  sees no bytes, select the other Cmod FTDI serial interface, confirm
+  1,000,000 baud, and check Linux serial-device permission.
+
+For a temporary Fedora permission test, inspect the device ownership with
+`ls -l /dev/ttyUSB1`. Use the distribution's normal serial-access group or a
+udev rule for the permanent fix; do not run the capture program as root.
 
 ## 4. Analyze conversion timing
 

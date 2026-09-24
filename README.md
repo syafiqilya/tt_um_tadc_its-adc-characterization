@@ -167,6 +167,11 @@ python pc/capture_tadc.py COM6 -o tadc_capture.csv
 
 Replace `COM6` with the Cmod A7 FTDI UART port shown by Windows.
 
+On Linux, use `python pc/capture_tadc.py --list-ports`, then select the Cmod
+UART device such as `/dev/ttyUSB1` or its stable `/dev/serial/by-id/...` path.
+The receiver waits for BTN1 indefinitely by default and prints stage-specific
+diagnostic hints if no UART data appears.
+
 The receiver also writes `tadc_capture.meta.json` beside the CSV. Keep both
 files together so the analysis tools know the exact FPGA clock frequencies.
 
