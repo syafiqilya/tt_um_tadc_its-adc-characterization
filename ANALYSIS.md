@@ -1,13 +1,12 @@
-# TADC Timing and FFT Characterization
+# PC Capture, FFT, and Frequency-Sweep Guide
 
-This guide takes a new PC from installation through timing validation,
-coherent-tone selection, and FFT-based ADC measurements. The commands are
-written for PowerShell and should also work in a normal terminal after replacing
-the Windows virtual-environment activation command.
+This guide is the shortest complete procedure for running the sample-only FPGA
+design. The FPGA captures ADC codes; Python performs all frequency-domain
+analysis.
 
-## 1. Install Python and dependencies
+## 1. Install once
 
-Install 64-bit Python 3.10 or newer. From the project root, run:
+Install 64-bit Python 3.10 or newer. From the repository root:
 
 ```powershell
 python -m venv .venv
@@ -16,202 +15,168 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-No Vivado installation is needed on the measurement PC. Vivado is required only
-on the PC used to build and program the FPGA.
+Linux activation:
 
-## 2. Verify the software without hardware
+```bash
+source .venv/bin/activate
+```
 
-Run this complete synthetic-data test:
+## 2. Confirm the software without hardware
 
 ```powershell
 python pc/generate_demo_capture.py
-python pc/analyze_timing.py demo_capture.csv
-python pc/plan_coherent_tone.py demo_capture_timing.json --target-hz 1000
-python pc/analyze_fft.py demo_capture.csv --timing demo_capture_timing.json --tone demo_capture_tone.json
+python pc/analyze_fft.py demo_capture.csv --expected-frequency-hz 1004.732572115
 ```
 
-Expected results include:
+The commands should create:
 
-- timing classification `stable`;
-- sample rate close to `38461.538 Hz`;
-- coherent FFT bin `107` near 1 kHz;
-- creation of JSON reports, CSV spectrum data, and PNG plots.
+- `demo_capture.csv` and `demo_capture.meta.json`;
+- `demo_capture_fft.json`;
+- `demo_capture_spectrum.csv`;
+- `demo_capture_fft.png`.
 
-## 3. Capture real hardware data
+The exact synthetic tone is FFT bin 107 using the nominal
+`1 MHz / 26 = 38,461.5384615 samples/s` rate.
 
-Connect the complete bench as described in `WIRING.md`, then program the FPGA.
-Find the Cmod A7 UART port in Windows Device Manager, then run:
+## 3. Prepare the hardware
+
+Follow `WIRING.md`. In particular, select the Tiny Tapeout project and release
+the carrier input drivers before connecting FPGA `clk` or `EN`:
+
+```python
+from ttboard.mode import RPMode
+
+tt.shuttle.tt_um_tadc_its.enable()
+tt.clock_project_stop()
+tt.mode = RPMode.ASIC_MANUAL_INPUTS
+tt.reset_project(False)
+```
+
+Then connect common ground, ADC digital signals, and analog stimulus. Keep
+`VIP`, `VIN`, and `VCM` within the ADC's 0–1.8 V analog range.
+
+## 4. Capture one block
+
+List ports if needed:
 
 ```powershell
-python pc/capture_tadc.py COM6 -o timing_capture.csv
+python pc/capture_tadc.py --list-ports
 ```
 
-Press Cmod A7 BTN1 when requested. Replace `COM6` with the real port.
+Windows example:
 
-On Linux, list the detected ports before capture:
+```powershell
+python pc/capture_tadc.py COM6 -o adc_capture.csv
+```
+
+Linux example:
 
 ```bash
-python pc/capture_tadc.py --list-ports
-ls -l /dev/serial/by-id/
-python pc/capture_tadc.py /dev/ttyUSB1 -o timing_capture.csv
+python pc/capture_tadc.py /dev/ttyUSB1 -o adc_capture.csv
 ```
 
-Prefer the stable `/dev/serial/by-id/...` name when available. The Cmod's FTDI
-device provides independent JTAG and UART functions, so do not assume that the
-lowest `/dev/ttyUSB*` number is the UART interface.
+After starting the command, press Cmod A7 BTN1. The program waits indefinitely
+for BTN1 by default. It creates:
 
-The receiver creates two files:
+- `adc_capture.csv`: sequence, ADC code, and unstable flag;
+- `adc_capture.meta.json`: capture size, 1 MHz ADC clock, 26 nominal clocks per
+  sample, and nominal sample rate.
 
-- `timing_capture.csv`: one row per ADC result;
-- `timing_capture.meta.json`: the FPGA clocks and capture format.
+If LED1 remains on, the FPGA has not received 4096 CKO events. Check the
+selected TT project, carrier manual-input mode, 1 MHz `clk`, `EN`, `CKO`, and
+common ground. If LED2 turns on but the PC receives nothing, check the FTDI
+UART port and 1,000,000 baud.
 
-Keep these two files together.
+## 5. Analyze one FFT
 
-The receiver waits indefinitely for the `TADC` header by default, allowing time
-to press BTN1 and inspect the hardware. To impose a 30-second limit, add
-`--wait-timeout 30`. The separate `--timeout` option controls how long an
-already-started UART stream may stall.
-
-### If no UART bytes arrive
-
-Use the Cmod LEDs to locate the stage that stopped:
-
-- LED1 never turns on after BTN1: check the programmed bitstream, BTN1, reset,
-  and the correct 12 MHz/100 MHz board constraint selection.
-- LED1 remains on: the FPGA has started, but has not collected 4096 `CKO`
-  events. Check Tiny Tapeout project selection, its disabled onboard clock,
-  FPGA `clk`/`EN`, `CKO`, common ground, and signal directions.
-- LED2 turns on: acquisition completed and UART transmission started. If the PC
-  sees no bytes, select the other Cmod FTDI serial interface, confirm
-  1,000,000 baud, and check Linux serial-device permission.
-
-For a temporary Fedora permission test, inspect the device ownership with
-`ls -l /dev/ttyUSB1`. Use the distribution's normal serial-access group or a
-udev rule for the permanent fix; do not run the capture program as root.
-
-## 4. Analyze conversion timing
+Set the function generator to a stable sine wave. For a 1 kHz input:
 
 ```powershell
-python pc/analyze_timing.py timing_capture.csv
+python pc/analyze_fft.py adc_capture.csv --expected-frequency-hz 1000
 ```
 
 Outputs:
 
-- `timing_capture_timing.json`: machine-readable timing report;
-- `timing_capture_timing.png`: conversion-period and ADC-clock plots.
+- `adc_capture_fft.json`: amplitude, SNR, SINAD, THD, SFDR, ENOB, and code
+  range;
+- `adc_capture_spectrum.csv`: one row per FFT bin;
+- `adc_capture_fft.png`: spectrum plot.
 
-The first record is excluded from interval statistics because it measures from
-`EN` assertion to the first `CKO`. The remaining records measure successive
-`CKO` events. The default stable-timing tolerance is one 10 MHz counter tick,
-or 100 ns. It can be changed with `--tolerance-ticks`.
+The default `blackmanharris` window limits leakage when the function generator
+and FPGA use independent oscillators. A rectangular window should be used only
+when the captured waveform is known to be coherent.
 
-A nonzero process exit code means the capture did not meet the stability test.
-Inspect unstable-data flags, period outliers, and ADC-clock-edge counts before
-using that capture for an FFT.
-
-## 5. Calculate the coherent generator frequency
-
-Choose the approximate desired input frequency. For example, to find the best
-coherent tone near 1 kHz:
+Because the FPGA no longer measures timing, the FFT frequency axis uses the
+nominal sample rate from metadata. If an oscilloscope or frequency counter
+provides a better result rate, override it:
 
 ```powershell
-python pc/plan_coherent_tone.py timing_capture_timing.json --target-hz 1000
+python pc/analyze_fft.py adc_capture.csv `
+  --sample-rate-hz 38460.9 `
+  --expected-frequency-hz 1000
 ```
 
-The terminal prints the exact frequency to enter into the function generator.
-The same value is saved in `timing_capture_tone.json` as
-`programmed_frequency_hz`.
+## 6. Run the frequency sweep
 
-By default, the calculator refuses a timing report classified as unstable.
-Correct the clock or interface problem first. `--allow-unstable-timing` exists
-only for calculating a nominal frequency that will later use a windowed FFT.
-
-If the generator has limited frequency resolution, include it. For a 0.001 Hz
-setting step:
+The generic sweep is manual so it works with any two-channel function
+generator. Example: 12 logarithmically spaced points from 100 Hz to 15 kHz:
 
 ```powershell
-python pc/plan_coherent_tone.py timing_capture_timing.json --target-hz 1000 --generator-resolution-hz 0.001
+python pc/fft_frequency_sweep.py COM6 `
+  --start-hz 100 `
+  --stop-hz 15000 `
+  --points 12 `
+  --spacing log `
+  --output-dir sweep_results
 ```
 
-Mathematical coherence requires an integer number of input cycles in the FFT:
+At every point:
 
-```text
-input_frequency = selected_bin * sample_rate / sample_count
-```
+1. The PC prints the requested generator frequency.
+2. Set CH1 and CH2 to that same frequency while keeping their required
+   differential phase, offset, and amplitude.
+3. Press Enter after the generator settles.
+4. Press Cmod A7 BTN1.
+5. Python receives the block, runs its FFT, and advances to the next point.
 
-The tool also requires the selected FFT bin to be coprime with the record count
-and avoids collisions through the requested harmonic order.
+Do not change amplitude or DC offset during a frequency-response sweep. Check
+the waveforms at the ADC pins because generator output amplitude can vary with
+load and frequency.
 
-### Important clock requirement
+The output directory contains every raw capture, metadata file, FFT report,
+spectrum, and optional point plot. The main results are:
 
-The calculator makes the nominal frequencies coherent, but two independent
-oscillators still drift. For a repeatable rectangular-window FFT, lock the
-function generator and FPGA/ADC timing to the same reference. The current FPGA
-build does not expose its internal 10 MHz clock; adding that output requires an
-RTL and XDC revision. See `WIRING.md` before making any reference connection.
+- `sweep_summary.csv`: easy to open in a spreadsheet;
+- `sweep_summary.json`: machine-readable results;
+- `sweep_summary.png`: amplitude, SINAD, SFDR, and ENOB versus generator
+  frequency.
 
-If there is no shared reference, use the automatic Blackman-Harris window and
-treat the measurement as noncoherent.
-
-## 6. Acquire FFT data
-
-Set the function generator to the reported `programmed_frequency_hz`. Use a
-clean sine wave that remains inside the ADC input range and common-mode limits.
-Do not overdrive the Tiny Tapeout analog input.
-
-Capture a new record:
+Useful variations:
 
 ```powershell
-python pc/capture_tadc.py COM6 -o sine_capture.csv
-python pc/analyze_timing.py sine_capture.csv
+# Linear instead of logarithmic spacing
+python pc/fft_frequency_sweep.py COM6 --start-hz 100 --stop-hz 15000 --points 20 --spacing linear
+
+# Use an independently measured sample rate
+python pc/fft_frequency_sweep.py COM6 --start-hz 100 --stop-hz 15000 --points 12 --sample-rate-hz 38460.9
+
+# Skip individual FFT PNG files but keep the final summary plot
+python pc/fft_frequency_sweep.py COM6 --start-hz 100 --stop-hz 15000 --points 12 --no-point-plots
 ```
 
-Use the new timing report when checking the final FFT:
+Keep all requested input frequencies below Nyquist, approximately 19.23 kHz
+for the nominal sample rate.
 
-```powershell
-python pc/analyze_fft.py sine_capture.csv --timing sine_capture_timing.json --tone timing_capture_tone.json
-```
+## Interpreting the results
 
-Outputs:
+- Falling fundamental amplitude shows frequency-response roll-off.
+- Falling SINAD/ENOB shows combined noise and distortion degradation.
+- Falling SFDR shows a spur or harmonic becoming stronger.
+- `unstable_sample_count > 0` means the parallel ADC bus changed between the
+  FPGA's two reads; inspect CKO/data timing and wiring.
+- A stationary or clipped code range indicates an analog-input, enable, clock,
+  or output-bus problem.
 
-- `sine_capture_fft.json`: FFT settings and performance measurements;
-- `sine_capture_spectrum.csv`: frequency and amplitude for every FFT bin;
-- `sine_capture_fft.png`: spectrum plot.
-
-The JSON report includes fundamental amplitude, SNR, SINAD, THD, SFDR, ENOB,
-DC code, code range, and harmonic-bin locations.
-
-## Window selection
-
-The FFT tool's default `--window auto` behavior is:
-
-- rectangular when timing is stable and a coherent tone plan is supplied;
-- four-term Blackman-Harris otherwise.
-
-The coherence decision is recalculated using the sample rate in the final sine
-capture. This catches drift between the initial timing measurement and the FFT
-measurement.
-
-Override it when necessary:
-
-```powershell
-python pc/analyze_fft.py sine_capture.csv --timing sine_capture_timing.json --window hann
-```
-
-Available windows are `rectangular`, `hann`, and `blackmanharris`.
-
-## Interpreting failures
-
-- `unstable_data_count > 0`: the parallel ADC bus changed between the FPGA's
-  two reads. Check wiring and `CKO`-to-data settling time.
-- Period outliers: check the ADC clock, `EN`, `CKO`, grounding, and FPGA input.
-- ADC-edge outliers: conversions are taking different numbers of ADC clocks.
-- Large FFT leakage with a rectangular window: the generator is not actually
-  coherent or the sampling aperture is moving.
-- Poor low-bit behavior: independently verify Tiny Tapeout `uio[1:0]`, because
-  the ADC project may not enable those two output pads.
-
-The FPGA timestamps `CKO`, which indicates externally visible result timing. It
-does not expose each internal SAR comparison. A stable fixed delay between the
-actual sampling aperture and `CKO` changes phase but not FFT magnitude; variable
-delay appears as sampling jitter and degrades high-frequency SNR.
+The FFT frequency coordinate is nominal unless `--sample-rate-hz` is supplied.
+The programmed generator frequencies in `sweep_summary.csv` remain the primary
+x-axis values for the response sweep.

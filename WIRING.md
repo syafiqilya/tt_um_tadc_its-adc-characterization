@@ -57,7 +57,8 @@ captured UART data. No separate USB-to-UART wiring is required.
 The Tiny Tapeout carrier-board RP2040/RP2350 still powers and selects the
 `tt_um_tadc_its` project. After the carrier has selected the project and
 released its project I/O, the Cmod A7 controls the ADC `clk` and `EN`, reads
-`CKO` and `DATA[8:0]`, counts the timing, and sends the capture to the PC.
+`CKO` and `DATA[8:0]`, stores the ordered ADC codes, and sends the capture to
+the PC. The FPGA does not calculate conversion timing.
 
 The supplied FPGA design does **not** drive Tiny Tapeout's project-selection
 management signals (`ctrl_ena`, `ctrl_sel_inc`, or `ctrl_sel_rst_n`) and does
@@ -154,7 +155,7 @@ Use two phase-locked generator channels:
 | Setting | Channel 1 to `VIP` | Channel 2 to `VIN` |
 |---|---:|---:|
 | Waveform | Sine | Sine |
-| Frequency | Coherent frequency from `plan_coherent_tone.py` | Same |
+| Frequency | Current point printed by `fft_frequency_sweep.py` | Same |
 | Phase | 0 degrees | 180 degrees |
 | DC offset | 0.9 V | 0.9 V |
 | Starting amplitude | 0.4 Vpp | 0.4 Vpp |
@@ -194,16 +195,21 @@ This produces a single-ended differential input. It is useful for bring-up but
 does not reproduce the fully differential stimulus used by the published ADC
 simulation. Use the two-channel arrangement for final dynamic measurements.
 
-## Clock coherence and reference wiring
+## Sample rate and reference wiring
 
 The current FPGA design sends only the 1 MHz ADC clock on Cmod A7 PIO3. It does
 **not** expose the internal 10 MHz system clock on a header. Therefore there is
 currently no external-reference wire between the Cmod A7 and function
 generator.
 
-The Python tools can calculate the correct nominal generator frequency and will
-detect drift in the final capture. Without a shared reference, use the automatic
-Blackman-Harris FFT window.
+The FPGA does not measure conversion timing. Python uses the nominal model of
+26 ADC clocks per output sample, or approximately 38.4615 ksample/s with the
+1 MHz ADC clock. If a more accurate sample rate is measured independently,
+provide it to the Python tools with `--sample-rate-hz`.
+
+Without a shared frequency reference, keep the default Blackman-Harris FFT
+window. The sweep summary uses the programmed function-generator settings as
+its primary frequency axis.
 
 For strict hardware coherence, a future FPGA revision should route a properly
 buffered 10 MHz reference to an unused Cmod pin and add an XDC constraint. Only
@@ -228,7 +234,7 @@ connect an arbitrary Cmod pin to the reference input.
 9. With ADC `EN` low, enable the analog source and scope `VCM`, `VIP`, and
    `VIN`; confirm they remain between 0 and 1.8 V.
 10. Start `capture_tadc.py`, press Cmod A7 BTN1, and inspect the first capture's
-    timing and unstable-data flags.
+    ADC-code range and unstable-data flags.
 
 Power the two boards from their own intended USB/power inputs. Share ground,
 but do not tie their 3.3 V supply outputs together unless a separately reviewed

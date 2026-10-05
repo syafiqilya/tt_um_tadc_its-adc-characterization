@@ -9,24 +9,19 @@ module adc_clock_gen #(
     input  wire clk,
     input  wire reset,
     input  wire run,
-    output reg  adc_clk,
-    output reg  adc_clk_rise
+    output reg  adc_clk
 );
     localparam integer COUNT_WIDTH = 4;
     localparam [COUNT_WIDTH-1:0] HALF_COUNT = HALF_PERIOD_TICKS - 1;
     reg [COUNT_WIDTH-1:0] divider_count;
 
     always @(posedge clk) begin
-        adc_clk_rise <= 1'b0;
-
         if (reset || !run) begin
             divider_count <= {COUNT_WIDTH{1'b0}};
             adc_clk       <= 1'b0;
         end else if (divider_count == HALF_COUNT) begin
             divider_count <= {COUNT_WIDTH{1'b0}};
             adc_clk       <= ~adc_clk;
-            if (!adc_clk)
-                adc_clk_rise <= 1'b1;
         end else begin
             divider_count <= divider_count + 1'b1;
         end

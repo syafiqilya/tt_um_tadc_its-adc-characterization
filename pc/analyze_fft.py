@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calculate the TADC spectrum and common ADC dynamic-performance metrics."""
+"""Calculate a TADC FFT and common ADC dynamic-performance metrics."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from tadc_io import default_output, load_capture, load_json, save_json
+from tadc_io import default_output, load_capture, save_json
 
 
 def blackman_harris(sample_count: int) -> np.ndarray:
@@ -59,6 +59,11 @@ def calculate_metrics(
     harmonic_count: int,
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
     sample_count = codes.size
+    if sample_count < 8:
+        raise ValueError("at least eight ADC samples are required")
+    if sample_rate_hz <= 0:
+        raise ValueError("sample rate must be positive")
+
     window, integration_radius = make_window(window_name, sample_count)
     centered = codes.astype(float) - float(np.mean(codes))
     spectrum = np.fft.rfft(centered * window)
@@ -77,6 +82,8 @@ def calculate_metrics(
     if expected_bin is None:
         fundamental_bin = int(np.argmax(bin_power[1:]) + 1)
     else:
+        if not 1 <= expected_bin < bin_power.size:
+            raise ValueError("expected tone is outside the usable FFT range")
         search_radius = max(1, integration_radius)
         low = max(1, expected_bin - search_radius)
         high = min(bin_power.size - 1, expected_bin + search_radius)
@@ -104,14 +111,19 @@ def calculate_metrics(
     noise_and_distortion = noise_power + distortion_power
 
     spur_candidates = considered - fundamental_bins
-    largest_spur_bin = max(spur_candidates, key=lambda index: bin_power[index]) if spur_candidates else 0
+    largest_spur_bin = (
+        max(spur_candidates, key=lambda index: bin_power[index])
+        if spur_candidates
+        else 0
+    )
     largest_spur_power = float(bin_power[largest_spur_bin]) if largest_spur_bin else 0.0
 
     sinad_db = db10(fundamental_power / noise_and_distortion)
     metrics: dict[str, Any] = {
-        "schema": "tadc-fft-report-v1",
+        "schema": "tadc-fft-report-v2",
         "sample_count": int(sample_count),
         "sample_rate_hz": sample_rate_hz,
+        "sample_rate_kind": "nominal_unless_overridden",
         "nyquist_hz": sample_rate_hz / 2.0,
         "bin_width_hz": sample_rate_hz / sample_count,
         "adc_bits": bit_count,
@@ -136,7 +148,12 @@ def calculate_metrics(
     return metrics, frequencies, amplitude_dbfs
 
 
-def write_plot(frequencies: np.ndarray, amplitude_dbfs: np.ndarray, metrics: dict[str, Any], path: Path) -> None:
+def write_plot(
+    frequencies: np.ndarray,
+    amplitude_dbfs: np.ndarray,
+    metrics: dict[str, Any],
+    path: Path,
+) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -149,7 +166,7 @@ def write_plot(frequencies: np.ndarray, amplitude_dbfs: np.ndarray, metrics: dic
             f"TADC FFT | {metrics['window']} window | "
             f"SINAD={metrics['sinad_db']:.2f} dB | ENOB={metrics['enob_bits']:.2f} bits"
         ),
-        xlabel="Frequency (Hz)",
+        xlabel="Frequency (Hz, nominal sample-rate scale)",
         ylabel="Amplitude (dBFS)",
         xlim=(0, metrics["nyquist_hz"]),
         ylim=(-140, 5),
@@ -160,90 +177,93 @@ def write_plot(frequencies: np.ndarray, amplitude_dbfs: np.ndarray, metrics: dic
     plt.close(figure)
 
 
-def write_spectrum(path: Path, frequencies: np.ndarray, amplitude_dbfs: np.ndarray) -> None:
+def write_spectrum(
+    path: Path,
+    frequencies: np.ndarray,
+    amplitude_dbfs: np.ndarray,
+) -> None:
     with path.open("w", newline="", encoding="utf-8") as output_file:
         writer = csv.writer(output_file)
         writer.writerow(["frequency_hz", "amplitude_dbfs"])
         writer.writerows(zip(frequencies, amplitude_dbfs, strict=True))
 
 
+def analyze_capture(
+    capture: dict[str, Any],
+    sample_rate_hz: float,
+    bit_count: int = 9,
+    window_name: str = "blackmanharris",
+    expected_frequency_hz: float | None = None,
+    harmonic_count: int = 5,
+) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
+    sequence = capture["sequence"]
+    if not np.array_equal(sequence, np.arange(sequence.size)):
+        raise ValueError("sequence numbers are not contiguous; FFT ordering is invalid")
+    if np.any(capture["unstable"]):
+        warnings.warn("capture contains unstable sample flags")
+
+    expected_bin: int | None = None
+    if expected_frequency_hz is not None:
+        if not 0 < expected_frequency_hz < sample_rate_hz / 2.0:
+            raise ValueError("expected frequency must be between DC and Nyquist")
+        expected_bin = int(round(expected_frequency_hz * sequence.size / sample_rate_hz))
+
+    metrics, frequencies, amplitude_dbfs = calculate_metrics(
+        capture["adc_code"],
+        sample_rate_hz,
+        bit_count,
+        window_name,
+        expected_bin,
+        harmonic_count,
+    )
+    metrics.update(
+        {
+            "source_csv": str(capture["path"]),
+            "expected_frequency_hz": expected_frequency_hz,
+            "unstable_sample_count": int(np.count_nonzero(capture["unstable"])),
+        }
+    )
+    return metrics, frequencies, amplitude_dbfs
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)
     parser.add_argument("--metadata", type=Path)
-    parser.add_argument("--timing", type=Path, help="timing report from analyze_timing.py")
-    parser.add_argument("--tone", type=Path, help="tone plan from plan_coherent_tone.py")
+    parser.add_argument(
+        "--sample-rate-hz",
+        type=float,
+        help="override nominal sample rate stored beside the capture",
+    )
+    parser.add_argument("--expected-frequency-hz", type=float)
     parser.add_argument("--bits", type=int, default=9)
     parser.add_argument("--harmonics", type=int, default=5)
     parser.add_argument(
         "--window",
-        choices=("auto", "rectangular", "hann", "blackmanharris"),
-        default="auto",
+        choices=("rectangular", "hann", "blackmanharris"),
+        default="blackmanharris",
     )
-    parser.add_argument("-o", "--output", type=Path, help="FFT report JSON")
-    parser.add_argument("--plot", type=Path, help="FFT plot PNG")
+    parser.add_argument("-o", "--output", type=Path)
+    parser.add_argument("--plot", type=Path)
     parser.add_argument("--spectrum-csv", type=Path)
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args()
 
     capture = load_capture(args.capture, args.metadata)
-    timing_path = args.timing or default_output(args.capture, "_timing.json")
-    timing = load_json(timing_path) if timing_path.exists() else None
-    tone = load_json(args.tone) if args.tone else None
-
-    if timing:
-        sample_rate_hz = float(timing["sample_rate_hz"])
-    else:
-        normal = ~capture["first_record"]
-        sample_rate_hz = capture["system_clock_hz"] / float(np.mean(capture["period_ticks"][normal]))
-        warnings.warn("no timing report supplied; deriving sample rate directly from capture")
-
-    if np.any(capture["unstable"]):
-        warnings.warn(
-            "capture contains unstable-data flags; codes are retained to preserve uniform sampling"
+    sample_rate_hz = args.sample_rate_hz or capture["sample_rate_hz"]
+    if not sample_rate_hz:
+        raise ValueError(
+            "sample rate is unavailable; keep the .meta.json file beside the CSV "
+            "or provide --sample-rate-hz"
         )
-    if not np.array_equal(capture["sequence"], np.arange(capture["sequence"].size)):
-        raise ValueError("sequence numbers are not contiguous; a normal FFT would be invalid")
 
-    expected_bin: int | None = None
-    frequency_setting_coherent = False
-    residual_cycle_error: float | None = None
-    phase_slip_degrees: float | None = None
-    if tone:
-        if int(tone["sample_count"]) != capture["adc_code"].size:
-            raise ValueError("tone plan sample count does not match capture length")
-        expected_bin = int(tone["selected_bin"])
-        programmed_hz = float(tone["programmed_frequency_hz"])
-        actual_cycles = programmed_hz * capture["adc_code"].size / sample_rate_hz
-        residual_cycle_error = actual_cycles - expected_bin
-        phase_slip_degrees = residual_cycle_error * 360.0
-        maximum_cycle_error = float(tone.get("maximum_cycle_error", 0.01))
-        frequency_setting_coherent = abs(residual_cycle_error) <= maximum_cycle_error
-
-    window_name = args.window
-    if window_name == "auto":
-        timing_stable = bool(timing and timing.get("timing_stable"))
-        window_name = "rectangular" if timing_stable and frequency_setting_coherent else "blackmanharris"
-
-    metrics, frequencies, amplitude_dbfs = calculate_metrics(
-        capture["adc_code"],
-        sample_rate_hz,
-        args.bits,
-        window_name,
-        expected_bin,
-        args.harmonics,
-    )
-    metrics.update(
-        {
-            "source_csv": str(args.capture.resolve()),
-            "source_timing_report": str(timing_path.resolve()) if timing else None,
-            "source_tone_plan": str(args.tone.resolve()) if args.tone else None,
-            "timing_stable": bool(timing and timing.get("timing_stable")),
-            "frequency_setting_coherent": frequency_setting_coherent,
-            "residual_cycle_error_at_capture_rate": residual_cycle_error,
-            "phase_slip_degrees_at_capture_rate": phase_slip_degrees,
-            "unstable_data_count": int(np.count_nonzero(capture["unstable"])),
-        }
+    metrics, frequencies, amplitude_dbfs = analyze_capture(
+        capture,
+        sample_rate_hz=float(sample_rate_hz),
+        bit_count=args.bits,
+        window_name=args.window,
+        expected_frequency_hz=args.expected_frequency_hz,
+        harmonic_count=args.harmonics,
     )
 
     output = args.output or default_output(args.capture, "_fft.json")
@@ -254,13 +274,8 @@ def main() -> int:
     if not args.no_plot:
         write_plot(frequencies, amplitude_dbfs, metrics, plot)
 
+    print(f"Sample rate used: {metrics['sample_rate_hz']:.9f} samples/s")
     print(f"Window: {metrics['window']}")
-    if tone:
-        print(
-            "Coherence at this capture rate: "
-            f"{frequency_setting_coherent} "
-            f"(phase slip {phase_slip_degrees:.6g} degrees)"
-        )
     print(
         f"Fundamental: bin {metrics['fundamental_bin']}, "
         f"{metrics['fundamental_frequency_hz']:.9f} Hz, "

@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Receive and decode one buffered TADC capture from the Cmod A7 UART."""
+"""Receive one sample-only TADC capture from the Cmod A7 UART."""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import struct
 import sys
 import time
 from pathlib import Path
+from typing import Any
+
+from tadc_io import write_capture
 
 
 HEADER = struct.Struct("<4sBBHII")
-RECORD = struct.Struct("<2sHHIIH")
+RECORD = struct.Struct("<2sH")
+PROTOCOL_VERSION = 2
 
 
 def read_exact(port, count: int, timeout_seconds: float) -> bytes:
@@ -67,15 +69,69 @@ def find_header(
         if now >= next_status:
             if received_count:
                 print(
-                    f"Still waiting for TADC header; {received_count} non-header "
-                    "UART bytes observed. Check baud rate and selected port."
+                    f"Still waiting for TADC v2 header; {received_count} "
+                    "non-header UART bytes observed. Check the bitstream and baud rate."
                 )
             else:
                 print(
                     "Still waiting; no UART bytes received. Press BTN1 and check "
-                    "LED1/LED2, the selected serial port, and ADC CKO wiring."
+                    "LED1/LED2, the serial port, and ADC CKO wiring."
                 )
             next_status = now + status_interval_seconds
+
+
+def receive_capture(
+    port,
+    wait_timeout_seconds: float = 0.0,
+    stream_timeout_seconds: float = 10.0,
+) -> tuple[list[dict[str, int]], dict[str, Any]]:
+    header_data = find_header(port, wait_timeout_seconds, stream_timeout_seconds)
+    magic, version, record_size, count, adc_hz, clocks_per_sample = HEADER.unpack(
+        header_data
+    )
+    if magic != b"TADC":
+        raise ValueError("corrupt stream header")
+    if version != PROTOCOL_VERSION:
+        raise ValueError(
+            f"FPGA uses TADC protocol v{version}; this software requires v{PROTOCOL_VERSION}. "
+            "Rebuild/program the FPGA from the same repository revision."
+        )
+    if record_size != RECORD.size:
+        raise ValueError(
+            f"stream record size is {record_size}, expected {RECORD.size} bytes"
+        )
+    if count == 0 or adc_hz == 0 or clocks_per_sample == 0:
+        raise ValueError("header contains an invalid zero-valued field")
+
+    print(f"TADC header received; downloading {count} ADC samples...")
+    rows: list[dict[str, int]] = []
+    for sequence in range(count):
+        raw = read_exact(port, RECORD.size, stream_timeout_seconds)
+        sync, code_flags = RECORD.unpack(raw)
+        if sync != b"\xA5\x5A":
+            raise ValueError(f"bad record sync at sample {sequence}")
+        if code_flags & ~0x03FF:
+            raise ValueError(f"reserved record bits are nonzero at sample {sequence}")
+        rows.append(
+            {
+                "sequence": sequence,
+                "adc_code": code_flags & 0x01FF,
+                "unstable": int(bool(code_flags & 0x0200)),
+            }
+        )
+
+    sample_rate = float(adc_hz) / float(clocks_per_sample)
+    metadata: dict[str, Any] = {
+        "schema": "tadc-sample-capture-v2",
+        "format_version": version,
+        "record_size_bytes": record_size,
+        "record_count": count,
+        "adc_clock_hz": adc_hz,
+        "clocks_per_sample": clocks_per_sample,
+        "nominal_sample_rate_hz": sample_rate,
+        "sample_rate_kind": "nominal_from_adc_clock_division",
+    }
+    return rows, metadata
 
 
 def print_serial_ports() -> int:
@@ -97,40 +153,21 @@ def print_serial_ports() -> int:
 def print_no_data_help() -> None:
     print("", file=sys.stderr)
     print("Hardware checks:", file=sys.stderr)
-    print("  LED1 never turns on: BTN1/start, bitstream, or FPGA clock problem.", file=sys.stderr)
-    print("  LED1 stays on: capture is waiting for ADC CKO events.", file=sys.stderr)
-    print("  LED2 turns on: capture completed; check serial port and 1,000,000 baud.", file=sys.stderr)
-    print("  Linux: run --list-ports or inspect /dev/serial/by-id/.", file=sys.stderr)
-    print("  Ensure the user has permission for the serial device (often dialout).", file=sys.stderr)
+    print("  LED1 never turns on: check BTN1, bitstream, or FPGA clock.", file=sys.stderr)
+    print("  LED1 stays on: the FPGA is waiting for 4096 ADC CKO events.", file=sys.stderr)
+    print("  LED2 turns on: capture completed; check port and 1,000,000 baud.", file=sys.stderr)
+    print("  Confirm Tiny Tapeout manual-input mode and common ground.", file=sys.stderr)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", nargs="?", help="COM6 or /dev/ttyUSB1")
-    parser.add_argument(
-        "--list-ports",
-        action="store_true",
-        help="list detected serial ports and exit",
-    )
+    parser.add_argument("--list-ports", action="store_true")
     parser.add_argument("-o", "--output", type=Path, default=Path("tadc_capture.csv"))
-    parser.add_argument(
-        "--metadata",
-        type=Path,
-        help="metadata JSON path (default: <output>.meta.json)",
-    )
+    parser.add_argument("--metadata", type=Path)
     parser.add_argument("--baud", type=int, default=1_000_000)
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=10.0,
-        help="maximum stalled-stream time after the header (default: 10 s)",
-    )
-    parser.add_argument(
-        "--wait-timeout",
-        type=float,
-        default=0.0,
-        help="maximum time waiting for TADC header; 0 waits forever (default: 0)",
-    )
+    parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--wait-timeout", type=float, default=0.0)
     args = parser.parse_args()
 
     if args.list_ports:
@@ -151,38 +188,12 @@ def main() -> int:
     try:
         with serial.Serial(args.port, args.baud, timeout=0.25) as port:
             print(f"Opened {args.port} at {args.baud:,} baud.")
-            print("Waiting for TADC stream; press BTN1 on the Cmod A7...")
-            header_data = find_header(port, args.wait_timeout, args.timeout)
-            magic, version, record_size, count, system_hz, adc_hz = HEADER.unpack(header_data)
-            if magic != b"TADC" or version != 1 or record_size != RECORD.size:
-                raise ValueError("unsupported or corrupt stream header")
-
-            print(f"TADC header received; downloading {count} records...")
-            rows = []
-            for expected_sequence in range(count):
-                raw = read_exact(port, RECORD.size, args.timeout)
-                sync, sequence, code_flags, timestamp, period, adc_edges = RECORD.unpack(raw)
-                if sync != b"\xA5\x5A":
-                    raise ValueError(f"bad record sync at sequence {expected_sequence}")
-                if sequence != expected_sequence:
-                    raise ValueError(f"expected sequence {expected_sequence}, received {sequence}")
-
-                code = code_flags & 0x1FF
-                unstable = bool(code_flags & (1 << 9))
-                first = bool(code_flags & (1 << 10))
-                rows.append(
-                    {
-                        "sequence": sequence,
-                        "adc_code": code,
-                        "unstable": int(unstable),
-                        "first_record": int(first),
-                        "timestamp_ticks": timestamp,
-                        "timestamp_us": timestamp * 1e6 / system_hz,
-                        "period_ticks": period,
-                        "period_us": period * 1e6 / system_hz,
-                        "adc_clock_edges": adc_edges,
-                    }
-                )
+            print("Waiting for TADC samples; press BTN1 on the Cmod A7...")
+            rows, metadata = receive_capture(
+                port,
+                wait_timeout_seconds=args.wait_timeout,
+                stream_timeout_seconds=args.timeout,
+            )
     except TimeoutError as error:
         print(f"Capture timeout: {error}", file=sys.stderr)
         print_no_data_help()
@@ -191,34 +202,19 @@ def main() -> int:
         print(f"Serial-port error: {error}", file=sys.stderr)
         print_no_data_help()
         return 1
+    except (ValueError, struct.error) as error:
+        print(f"Capture format error: {error}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\nCapture cancelled by user.", file=sys.stderr)
         return 130
 
-    with args.output.open("w", newline="") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-
-    metadata_path = args.metadata or args.output.with_suffix(".meta.json")
-    metadata = {
-        "schema": "tadc-capture-v1",
-        "format_version": version,
-        "record_size_bytes": record_size,
-        "record_count": count,
-        "system_clock_hz": system_hz,
-        "adc_clock_hz": adc_hz,
-        "counter_tick_seconds": 1.0 / system_hz,
-        "source_csv": args.output.name,
-    }
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-
-    periods = [row["period_ticks"] for row in rows[1:]] or [rows[0]["period_ticks"]]
+    metadata_path = write_capture(rows, metadata, args.output, args.metadata)
     unstable_count = sum(row["unstable"] for row in rows)
-    print(f"Received {count} samples")
-    print(f"System clock: {system_hz} Hz; ADC clock: {adc_hz} Hz")
-    print(f"Period ticks: min={min(periods)}, max={max(periods)}")
-    print(f"Unstable data flags: {unstable_count}")
+    print(f"Received {len(rows)} ADC samples")
+    print(f"ADC clock: {metadata['adc_clock_hz']:,} Hz")
+    print(f"Nominal sample rate: {metadata['nominal_sample_rate_hz']:.9f} samples/s")
+    print(f"Unstable sample flags: {unstable_count}")
     print(f"Saved {args.output.resolve()}")
     print(f"Saved {metadata_path.resolve()}")
     return 0

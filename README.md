@@ -1,205 +1,189 @@
-# Tiny Tapeout Time-Domain ADC — Cmod A7 Controller
+# Tiny Tapeout TADC — Cmod A7 Sample Capture and FFT Sweep
 
-This Vivado-ready Verilog design controls `tt_um_tadc_its`, measures each
-externally visible conversion interval, buffers 4096 records, and sends the
-capture to a PC through the Cmod A7 USB-UART bridge.
+This project uses a Cmod A7 FPGA to control and capture the
+`tt_um_tadc_its` ADC. The FPGA collects 4096 ordered nine-bit ADC codes and
+sends them to a PC over the Cmod USB-UART interface. All FFT calculations and
+frequency-sweep reporting run in Python on the PC.
 
-## Important ADC integration risks
+The FPGA does **not** calculate conversion time, periods, timestamps, jitter,
+or FFT values.
 
-The ADC repository has three inconsistencies that cannot be corrected in the
-FPGA design:
+## Architecture
 
-1. The documentation says 10-bit, but the actual interface and SAR/CDAC logic
-   expose only `DATA[8:0]`, so this controller captures nine bits.
-2. `DATA[1:0]` use Tiny Tapeout `uio[1:0]`. The submitted analog schematic
-   connects `uio_out[1:0]`, but does not visibly drive `uio_oe[1:0]` high.
-   If those output-enable nets are floating in silicon, the two least
-   significant bits may not be driven at the pads. Check them with an
-   oscilloscope or logic analyzer during initial bring-up and ask the ADC
-   designer to confirm the integrated `uio_oe` state.
-3. The project declares a 1 MHz clock, while its 5.2 us conversion claim
-   corresponds to 26 clocks at 5 MHz. Start at 1 MHz as implemented here and
-   use the captured `adc_clock_edges` and `period_ticks` fields to determine
-   the real silicon behavior.
+```text
+Cmod oscillator -> MMCM -> 10 MHz internal FPGA logic clock
+                              |
+                              +-> divide by 10 -> 1 MHz -> TT project clk
 
-## Implemented clocking
+Tiny Tapeout CKO + DATA[8:0]
+            -> FPGA synchronizer and sample RAM
+            -> UART protocol v2
+            -> PC CSV
+            -> Python FFT / frequency sweep
+```
 
-- Cmod A7 input oscillator: 12 MHz by default (Rev. B).
-- Xilinx MMCM output/system clock: 10 MHz.
-- ADC clock: registered 1 MHz square wave derived from the 10 MHz domain.
-- Counter resolution: 100 ns.
+The 10 MHz clock remains necessary for FPGA logic, CKO synchronization, and
+the 1 Mbaud UART. Only the divided 1 MHz clock is sent to the ADC.
+
+## Important ADC integration notes
+
+1. The project is described as a 10-bit ADC, but the submitted interface
+   exposes `DATA[8:0]`; this controller therefore captures nine bits.
+2. `DATA[1:0]` use Tiny Tapeout `uio[1:0]`. If these bits do not move on real
+   silicon, check the pad output-enable state with an oscilloscope or logic
+   analyzer.
+3. The PC uses the nominal model of 26 ADC clocks per result, giving
+   `1,000,000 / 26 = 38,461.5384615` samples/s. Because the FPGA no longer
+   measures result timing, use `--sample-rate-hz` if an independently measured
+   sample rate is available.
+
+## FPGA clocking
+
+- Cmod A7 Rev. B oscillator: 12 MHz.
+- Optional Rev. C constraint: 100 MHz; use only after checking the board.
+- FPGA internal logic clock: 10 MHz from the Xilinx MMCM.
+- Tiny Tapeout ADC clock: 1 MHz on Cmod PIO3.
 - UART: 1,000,000 baud, 8-N-1.
 
-The FPGA has only one internal logic clock domain. The 1 MHz ADC clock is an
-external output, not a fabric clock.
+## Wiring and Tiny Tapeout carrier setup
 
-Two clock constraints and MMCM configurations are supplied:
+Follow [WIRING.md](WIRING.md) before powering the bench. It includes the full
+pin table, analog connections, voltage limits, grounding, and the required
+Tiny Tapeout `ASIC_MANUAL_INPUTS` commands.
 
-- `cmod_a7_rev_b_12mhz.xdc`: default official Rev. B 12 MHz oscillator.
-- `cmod_a7_rev_c_100mhz.xdc`: use only after confirming a 100 MHz oscillator
-  is actually fitted to the board.
+The carrier RP2040/RP2350 selects `tt_um_tadc_its`; the FPGA does not drive the
+Tiny Tapeout project-selection management signals.
 
-## Wiring
+## FPGA operation
 
-See [WIRING.md](WIRING.md) for the complete bench diagram, digital connection
-table, Tiny Tapeout analog pin locations, two-channel and single-channel
-function-generator setups, grounding, voltage limits, clock-coherence notes,
-and the recommended power-up sequence.
+1. Select `tt_um_tadc_its`, stop the carrier clock, and place the carrier in
+   `ASIC_MANUAL_INPUTS` as documented in `WIRING.md`.
+2. Connect common ground first, then the FPGA/ADC signals.
+3. Program the Cmod A7.
+4. Start the PC receiver.
+5. Press Cmod A7 BTN1.
+6. LED1 stays on while the FPGA waits for and captures 4096 CKO results.
+7. The FPGA stops ADC `clk`, lowers `EN`, and LED2 turns on while UART data is
+   sent.
+8. LED2 remains on when finished. Press BTN1 for another capture. BTN0 resets
+   the FPGA controller.
 
-Connect all grounds before connecting signals. Stop the Tiny Tapeout
-demoboard's own project clock and ensure its RP2040 is not driving the same
-input lines as the FPGA. The exact carrier-board MicroPython commands and safe
-connection order are in [Required carrier-board setup](WIRING.md#required-carrier-board-setup).
+For each synchronized CKO rising edge, the FPGA waits three internal 10 MHz
+ticks, reads the nine-bit bus twice, and stores the second value. A flag is
+stored if the two reads disagree. This is a data-validity check, not a timing
+measurement.
 
-| Cmod A7 connection | FPGA package pin | Tiny Tapeout signal | ADC function |
-|---|---:|---|---|
-| JA1 | G17 | `uo_out[0]` | `CKO` |
-| JA2 | G19 | `uo_out[1]` | `DATA[8]` |
-| JA3 | N18 | `uo_out[2]` | `DATA[7]` |
-| JA4 | L18 | `uo_out[3]` | `DATA[6]` |
-| JA7 | H17 | `uo_out[4]` | `DATA[5]` |
-| JA8 | H19 | `uo_out[5]` | `DATA[4]` |
-| JA9 | J19 | `uo_out[6]` | `DATA[3]` |
-| JA10 | K18 | `uo_out[7]` | `DATA[2]` |
-| PIO1 | M3 | `uio[0]` | `DATA[1]` |
-| PIO2 | L3 | `uio[1]` | `DATA[0]` |
-| PIO3 | A16 | project `clk` | 1 MHz ADC clock |
-| PIO4 | K3 | `ui_in[0]` | `EN` |
+## UART protocol version 2
 
-The Tiny Tapeout demoboard digital interface and Cmod A7 GPIO are both 3.3 V.
-This does not apply to the ADC analog pins: `VIP`, `VIN`, and `VCM` must stay
-inside the ADC's approximately 0–1.8 V analog range.
+All multibyte fields are little-endian.
 
-## Operation
-
-1. With FPGA `clk` and `EN` not yet connected, select `tt_um_tadc_its` on the
-   Tiny Tapeout demoboard.
-2. Stop the carrier clock and select `ASIC_MANUAL_INPUTS` using the exact
-   commands in [WIRING.md](WIRING.md#required-carrier-board-setup).
-3. Connect common ground first, then the FPGA/ADC digital signals.
-4. Program the Cmod A7.
-5. Open the PC receiver at 1,000,000 baud.
-6. Press Cmod A7 BTN1.
-7. LED1 remains on while 4096 records are acquired.
-8. The ADC is disabled and LED2 turns on while the block is transmitted.
-9. LED2 remains on after completion. Press BTN1 to acquire another block.
-10. BTN0 resets the controller.
-
-The FPGA controls the ADC clock and enable only after this handoff. It does not
-select the Tiny Tapeout project, control the carrier board, power either board,
-or automatically place the carrier RP2040/RP2350 in manual-input mode.
-
-The first record measures time from FPGA `EN` assertion to the first
-synchronized `CKO`. Later records measure time between successive `CKO`
-events. CKO passes through a two-flip-flop synchronizer, so absolute timing
-contains a fixed synchronization delay and approximately ±1 system-clock
-quantization.
-
-## Captured fields
-
-Each RAM entry contains:
-
-- 32-bit free-running CKO timestamp;
-- 32-bit period since the previous CKO (100 ns ticks);
-- 16-bit count of 1 MHz ADC rising edges since the previous CKO;
-- nine-bit ADC code;
-- an unstable-data flag;
-- a first-record flag.
-
-After synchronized CKO assertion, the controller waits three 10 MHz cycles,
-samples the parallel data twice on consecutive cycles, and flags the record if
-the two words differ.
-
-## UART format
-
-All multibyte integers are little-endian.
-
-The 16-byte stream header is:
+The 16-byte header is:
 
 | Offset | Size | Description |
 |---:|---:|---|
 | 0 | 4 | ASCII `TADC` |
-| 4 | 1 | Format version, currently 1 |
-| 5 | 1 | Record size, 16 bytes |
-| 6 | 2 | Record count |
-| 8 | 4 | FPGA system-clock frequency |
-| 12 | 4 | ADC clock frequency |
+| 4 | 1 | Protocol version: `2` |
+| 5 | 1 | Record size: `4` bytes |
+| 6 | 2 | Sample count |
+| 8 | 4 | ADC clock frequency in Hz |
+| 12 | 4 | Nominal ADC clocks per sample |
 
-Every 16-byte record is:
+Each four-byte sample record is:
 
 | Offset | Size | Description |
 |---:|---:|---|
 | 0 | 2 | Sync bytes `A5 5A` |
-| 2 | 2 | Sequence number |
-| 4 | 2 | Code/flags: bits 8:0 code, bit 9 unstable, bit 10 first |
-| 6 | 4 | Timestamp ticks |
-| 10 | 4 | Period ticks |
-| 14 | 2 | ADC rising-edge count |
+| 2 | 2 | Bits 8:0 ADC code; bit 9 unstable-data flag |
+
+Sample sequence is implicit from record order. The version-2 bitstream and
+version-2 Python software must be used together.
 
 ## Create the Vivado project
 
-For the standard Rev. B 12 MHz Cmod A7-35T:
+Vivado is needed only on the FPGA workstation. For the standard Rev. B Cmod
+A7-35T:
 
 ```powershell
 vivado -mode batch -source scripts/create_vivado_project.tcl -tclargs rev_b 35t
 ```
 
-To create the project and immediately build the bitstream:
+Build the bitstream immediately:
 
 ```powershell
 vivado -mode batch -source scripts/create_vivado_project.tcl -tclargs rev_b 35t build
 ```
 
-For a confirmed 100 MHz board:
+Use `15t` for a Cmod A7-15T. Use `rev_c` only for a board confirmed to have the
+100 MHz oscillator.
+
+## Install the PC software
 
 ```powershell
-vivado -mode batch -source scripts/create_vivado_project.tcl -tclargs rev_c 35t
-```
-
-Use `15t` instead of `35t` as the second argument for a Cmod A7-15T.
-
-## PC capture
-
-Install the only PC dependency:
-
-```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
-Then receive one capture:
+On Linux, activate with `source .venv/bin/activate`.
+
+## Capture one ADC block
 
 ```powershell
-python pc/capture_tadc.py COM6 -o tadc_capture.csv
+python pc/capture_tadc.py COM6 -o adc_capture.csv
 ```
 
-Replace `COM6` with the Cmod A7 FTDI UART port shown by Windows.
+On Linux:
 
-On Linux, use `python pc/capture_tadc.py --list-ports`, then select the Cmod
-UART device such as `/dev/ttyUSB1` or its stable `/dev/serial/by-id/...` path.
-The receiver waits for BTN1 indefinitely by default and prints stage-specific
-diagnostic hints if no UART data appears.
+```bash
+python pc/capture_tadc.py --list-ports
+python pc/capture_tadc.py /dev/ttyUSB1 -o adc_capture.csv
+```
 
-The receiver also writes `tadc_capture.meta.json` beside the CSV. Keep both
-files together so the analysis tools know the exact FPGA clock frequencies.
+The receiver writes `adc_capture.csv` and `adc_capture.meta.json`.
 
-## Timing, coherent-frequency, and FFT analysis
+## Analyze one FFT
 
-The project includes ready-to-run PC tools for:
+```powershell
+python pc/analyze_fft.py adc_capture.csv --expected-frequency-hz 1000
+```
 
-- checking conversion cadence, jitter, missing events, and unstable data;
-- calculating a coherent function-generator frequency from measured timing;
-- plotting the FFT and calculating SNR, SINAD, THD, SFDR, and ENOB;
-- generating a synthetic capture to verify the installation without hardware.
+This creates an FFT JSON report, spectrum CSV, and PNG plot. The default
+Blackman-Harris window is appropriate when the generator and FPGA do not share
+a frequency reference.
 
-See [ANALYSIS.md](ANALYSIS.md) for installation, the hardware measurement
-workflow, exact commands, output files, clock-coherence requirements, and
-troubleshooting.
+## Run an FFT frequency sweep
 
-## Simulation
+The sweep program is generator-independent and uses a manual setting prompt at
+each point:
 
-The supplied testbench bypasses the Xilinx MMCM and drives the design with a
-10 MHz simulation clock. It models one ADC result every 26 rising edges and
-checks the complete UART stream.
+```powershell
+python pc/fft_frequency_sweep.py COM6 `
+  --start-hz 100 `
+  --stop-hz 15000 `
+  --points 12 `
+  --spacing log `
+  --output-dir sweep_results
+```
+
+For each point, set both differential generator channels to the displayed
+frequency, press Enter, and then press FPGA BTN1. The program saves every raw
+capture and FFT, plus:
+
+- `sweep_summary.csv`;
+- `sweep_summary.json`;
+- `sweep_summary.png` containing amplitude, SINAD, SFDR, and ENOB versus input
+  frequency.
+
+See [ANALYSIS.md](ANALYSIS.md) for the complete friend-ready procedure.
+
+## Test without hardware
+
+```powershell
+python pc/generate_demo_capture.py
+python pc/analyze_fft.py demo_capture.csv --expected-frequency-hz 1004.732572115
+```
+
+## RTL simulation
 
 With Icarus Verilog installed:
 
@@ -208,13 +192,10 @@ iverilog -g2012 -o build/tb.vvp rtl/*.v sim/tb_tadc_cmod_a7_top.v
 vvp build/tb.vvp
 ```
 
-The expected result is:
+Expected output:
 
 ```text
 PASS: captured and transmitted 8 ADC records
 ```
 
-The RTL and testbench have also been parsed and elaborated together with zero
-diagnostics using slang 11.0. Vivado was intentionally not installed or run on
-the development PC; implementation and hardware programming are left for the
-destination FPGA workstation.
+Vivado was intentionally not installed on the development PC.

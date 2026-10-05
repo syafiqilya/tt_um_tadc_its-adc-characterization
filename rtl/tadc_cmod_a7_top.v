@@ -2,9 +2,10 @@
 `default_nettype none
 
 module tadc_cmod_a7_top #(
-    parameter integer INPUT_CLOCK_HZ = 12_000_000,
-    parameter integer SAMPLE_COUNT   = 4096,
-    parameter integer ADDR_WIDTH     = 12
+    parameter integer INPUT_CLOCK_HZ      = 12_000_000,
+    parameter integer SAMPLE_COUNT        = 4096,
+    parameter integer ADDR_WIDTH          = 12,
+    parameter integer CLOCKS_PER_SAMPLE   = 26
 ) (
     input  wire       sysclk,
     input  wire       btn_reset,
@@ -35,17 +36,15 @@ module tadc_cmod_a7_top #(
     reg adc_clock_run;
     reg capture_arm;
     reg stream_start;
-    wire adc_clk_rise;
 
     wire mem_we;
     wire [ADDR_WIDTH-1:0] mem_waddr;
-    wire [95:0] mem_wdata;
+    wire [9:0] mem_wdata;
     wire [ADDR_WIDTH-1:0] mem_raddr;
-    reg  [95:0] mem_rdata;
-    (* ram_style = "block" *) reg [95:0] capture_memory [0:SAMPLE_COUNT-1];
+    reg  [9:0] mem_rdata;
+    (* ram_style = "block" *) reg [9:0] capture_memory [0:SAMPLE_COUNT-1];
 
     wire capture_done;
-    wire [ADDR_WIDTH:0] captured_count;
     wire streamer_busy;
     wire streamer_done;
     wire uart_start;
@@ -72,8 +71,7 @@ module tadc_cmod_a7_top #(
         .clk(clk_10m),
         .reset(reset),
         .run(adc_clock_run),
-        .adc_clk(adc_clk),
-        .adc_clk_rise(adc_clk_rise)
+        .adc_clk(adc_clk)
     );
 
     adc_capture #(
@@ -85,14 +83,12 @@ module tadc_cmod_a7_top #(
         .reset(reset),
         .arm(capture_arm),
         .active(control_state == CTRL_CAPTURE),
-        .adc_clk_rise(adc_clk_rise),
         .adc_cko_async(adc_cko),
         .adc_data_async(adc_data),
         .mem_we(mem_we),
         .mem_waddr(mem_waddr),
         .mem_wdata(mem_wdata),
-        .capture_done(capture_done),
-        .captured_count(captured_count)
+        .capture_done(capture_done)
     );
 
     // True dual-purpose RAM: acquisition writes, streamer reads.
@@ -105,8 +101,8 @@ module tadc_cmod_a7_top #(
     capture_streamer #(
         .SAMPLE_COUNT(SAMPLE_COUNT),
         .ADDR_WIDTH(ADDR_WIDTH),
-        .SYSTEM_CLOCK_HZ(10_000_000),
-        .ADC_CLOCK_HZ(1_000_000)
+        .ADC_CLOCK_HZ(1_000_000),
+        .CLOCKS_PER_SAMPLE(CLOCKS_PER_SAMPLE)
     ) streamer_i (
         .clk(clk_10m),
         .reset(reset),
