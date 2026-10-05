@@ -2,10 +2,9 @@
 `default_nettype none
 
 module tadc_cmod_a7_top #(
-    parameter integer INPUT_CLOCK_HZ      = 12_000_000,
-    parameter integer SAMPLE_COUNT        = 4096,
-    parameter integer ADDR_WIDTH          = 12,
-    parameter integer CLOCKS_PER_SAMPLE   = 26
+    parameter integer INPUT_CLOCK_HZ = 12_000_000,
+    parameter integer SAMPLE_COUNT   = 4096,
+    parameter integer ADDR_WIDTH     = 12
 ) (
     input  wire       sysclk,
     input  wire       btn_reset,
@@ -39,10 +38,10 @@ module tadc_cmod_a7_top #(
 
     wire mem_we;
     wire [ADDR_WIDTH-1:0] mem_waddr;
-    wire [9:0] mem_wdata;
+    wire [41:0] mem_wdata;
     wire [ADDR_WIDTH-1:0] mem_raddr;
-    reg  [9:0] mem_rdata;
-    (* ram_style = "block" *) reg [9:0] capture_memory [0:SAMPLE_COUNT-1];
+    reg  [41:0] mem_rdata;
+    (* ram_style = "block" *) reg [41:0] capture_memory [0:SAMPLE_COUNT-1];
 
     wire capture_done;
     wire streamer_busy;
@@ -101,8 +100,8 @@ module tadc_cmod_a7_top #(
     capture_streamer #(
         .SAMPLE_COUNT(SAMPLE_COUNT),
         .ADDR_WIDTH(ADDR_WIDTH),
-        .ADC_CLOCK_HZ(1_000_000),
-        .CLOCKS_PER_SAMPLE(CLOCKS_PER_SAMPLE)
+        .TIMER_CLOCK_HZ(10_000_000),
+        .ADC_CLOCK_HZ(1_000_000)
     ) streamer_i (
         .clk(clk_10m),
         .reset(reset),

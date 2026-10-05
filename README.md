@@ -1,12 +1,13 @@
-# Tiny Tapeout TADC — Cmod A7 Sample Capture and FFT Sweep
+# Tiny Tapeout TADC — Timestamped Cmod A7 Capture and FFT Sweep
 
 This project uses a Cmod A7 FPGA to control and capture the
-`tt_um_tadc_its` ADC. The FPGA collects 4096 ordered nine-bit ADC codes and
-sends them to a PC over the Cmod USB-UART interface. All FFT calculations and
-frequency-sweep reporting run in Python on the PC.
+`tt_um_tadc_its` ADC. The FPGA collects 4096 ordered nine-bit ADC codes and a
+raw 10 MHz counter timestamp for every `CKO`, then sends them to a PC over the
+Cmod USB-UART interface. Sampling-speed, interval, FFT, and frequency-sweep
+calculations run in Python on the PC.
 
-The FPGA does **not** calculate conversion time, periods, timestamps, jitter,
-or FFT values.
+The FPGA does **not** calculate conversion time, sampling speed, jitter, or FFT
+values. It only captures raw timestamps alongside the ADC data.
 
 ## Architecture
 
@@ -16,10 +17,10 @@ Cmod oscillator -> MMCM -> 10 MHz internal FPGA logic clock
                               +-> divide by 10 -> 1 MHz -> TT project clk
 
 Tiny Tapeout CKO + DATA[8:0]
-            -> FPGA synchronizer and sample RAM
-            -> UART protocol v2
+            -> FPGA synchronizer, timestamp counter, and capture RAM
+            -> UART protocol v3
             -> PC CSV
-            -> Python FFT / frequency sweep
+            -> Python sample-rate calculation / FFT / frequency sweep
 ```
 
 The 10 MHz clock remains necessary for FPGA logic, CKO synchronization, and
@@ -32,10 +33,10 @@ the 1 Mbaud UART. Only the divided 1 MHz clock is sent to the ADC.
 2. `DATA[1:0]` use Tiny Tapeout `uio[1:0]`. If these bits do not move on real
    silicon, check the pad output-enable state with an oscilloscope or logic
    analyzer.
-3. The PC uses the nominal model of 26 ADC clocks per result, giving
-   `1,000,000 / 26 = 38,461.5384615` samples/s. Because the FPGA no longer
-   measures result timing, use `--sample-rate-hz` if an independently measured
-   sample rate is available.
+3. Python measures the average result rate from the first and last CKO
+   timestamp. With 4096 records it uses 4095 intervals, avoiding the startup
+   delay before the first result. `--sample-rate-hz` can still override this
+   result when a calibrated external measurement is available.
 
 ## FPGA clocking
 
@@ -68,12 +69,12 @@ Tiny Tapeout project-selection management signals.
 8. LED2 remains on when finished. Press BTN1 for another capture. BTN0 resets
    the FPGA controller.
 
-For each synchronized CKO rising edge, the FPGA waits three internal 10 MHz
-ticks, reads the nine-bit bus twice, and stores the second value. A flag is
-stored if the two reads disagree. This is a data-validity check, not a timing
-measurement.
+For each synchronized CKO rising edge, the FPGA latches the current 10 MHz
+counter, waits three internal clock ticks, reads the nine-bit bus twice, and
+stores the second value. A flag is stored if the two reads disagree. Python
+calculates timing from the raw counter values.
 
-## UART protocol version 2
+## UART protocol version 3
 
 All multibyte fields are little-endian.
 
@@ -82,21 +83,22 @@ The 16-byte header is:
 | Offset | Size | Description |
 |---:|---:|---|
 | 0 | 4 | ASCII `TADC` |
-| 4 | 1 | Protocol version: `2` |
-| 5 | 1 | Record size: `4` bytes |
+| 4 | 1 | Protocol version: `3` |
+| 5 | 1 | Record size: `8` bytes |
 | 6 | 2 | Sample count |
-| 8 | 4 | ADC clock frequency in Hz |
-| 12 | 4 | Nominal ADC clocks per sample |
+| 8 | 4 | Timestamp-counter frequency in Hz |
+| 12 | 4 | ADC clock frequency in Hz |
 
-Each four-byte sample record is:
+Each eight-byte sample record is:
 
 | Offset | Size | Description |
 |---:|---:|---|
 | 0 | 2 | Sync bytes `A5 5A` |
 | 2 | 2 | Bits 8:0 ADC code; bit 9 unstable-data flag |
+| 4 | 4 | Timestamp of the synchronized CKO rising edge |
 
-Sample sequence is implicit from record order. The version-2 bitstream and
-version-2 Python software must be used together.
+Sample sequence is implicit from record order. The version-3 bitstream and
+version-3 Python software must be used together.
 
 ## Create the Vivado project
 
@@ -139,7 +141,9 @@ python pc/capture_tadc.py --list-ports
 python pc/capture_tadc.py /dev/ttyUSB1 -o adc_capture.csv
 ```
 
-The receiver writes `adc_capture.csv` and `adc_capture.meta.json`.
+The receiver writes `adc_capture.csv` and `adc_capture.meta.json`. The CSV
+retains every raw timestamp; the metadata contains the sampling-speed and CKO
+interval calculations performed by Python.
 
 ## Analyze one FFT
 
@@ -175,6 +179,21 @@ capture and FFT, plus:
   frequency.
 
 See [ANALYSIS.md](ANALYSIS.md) for the complete friend-ready procedure.
+
+To sweep around an estimated analog input frequency—for example 5 kHz ±500
+Hz—use:
+
+```powershell
+python pc/fft_frequency_sweep.py COM6 `
+  --center-hz 5000 `
+  --plus-minus-hz 500 `
+  --points 11 `
+  --spacing linear `
+  --output-dir sweep_around_5k
+```
+
+The center is an expected **analog input frequency**, not the ADC sample rate.
+Normal ADC tests should remain below the measured Nyquist frequency (`Fs/2`).
 
 ## Test without hardware
 

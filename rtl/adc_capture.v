@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-// Captures one nine-bit ADC code for each synchronized CKO rising edge.
-// No conversion timestamps, periods, or ADC-clock-edge counts are stored.
+// Captures one nine-bit ADC code and one 10 MHz timestamp for each
+// synchronized CKO rising edge. The PC performs all timing calculations.
 module adc_capture #(
     parameter integer SAMPLE_COUNT    = 4096,
     parameter integer ADDR_WIDTH      = 12,
@@ -16,7 +16,7 @@ module adc_capture #(
     input  wire [8:0]            adc_data_async,
     output reg                   mem_we,
     output reg  [ADDR_WIDTH-1:0] mem_waddr,
-    output reg  [9:0]            mem_wdata,
+    output reg  [41:0]           mem_wdata,
     output reg                   capture_done
 );
     localparam ST_IDLE   = 2'd0;
@@ -32,6 +32,8 @@ module adc_capture #(
     reg [1:0] state;
     reg [3:0] wait_count;
     reg [8:0] data_first;
+    reg [31:0] timestamp_counter;
+    reg [31:0] event_timestamp;
 
     wire cko_rise = cko_sync & ~cko_sync_d;
 
@@ -54,18 +56,24 @@ module adc_capture #(
             state        <= ST_IDLE;
             wait_count   <= 4'd0;
             data_first   <= 9'd0;
+            timestamp_counter <= 32'd0;
+            event_timestamp   <= 32'd0;
             mem_waddr    <= {ADDR_WIDTH{1'b0}};
-            mem_wdata    <= 10'd0;
+            mem_wdata    <= 42'd0;
             capture_done <= 1'b0;
         end else if (arm) begin
             state        <= ST_IDLE;
             wait_count   <= 4'd0;
+            timestamp_counter <= 32'd0;
             mem_waddr    <= {ADDR_WIDTH{1'b0}};
             capture_done <= 1'b0;
-        end else if (active && !capture_done) begin
-            case (state)
+        end else begin
+            timestamp_counter <= timestamp_counter + 1'b1;
+            if (active && !capture_done) begin
+                case (state)
                 ST_IDLE: begin
                     if (cko_rise) begin
+                        event_timestamp <= timestamp_counter;
                         wait_count <= DATA_WAIT_TICKS[3:0];
                         state      <= ST_WAIT;
                     end
@@ -84,9 +92,11 @@ module adc_capture #(
                 end
 
                 ST_VERIFY: begin
-                    // Bit 9 reports that the two consecutive reads disagreed.
+                    // [41:10] is the synchronized CKO timestamp.
+                    // Bit 9 reports that the two data reads disagreed.
                     // Bits 8:0 contain the ADC code from the second read.
                     mem_wdata <= {
+                        event_timestamp,
                         (data_first != adc_data_async),
                         adc_data_async
                     };
@@ -101,7 +111,8 @@ module adc_capture #(
                 end
 
                 default: state <= ST_IDLE;
-            endcase
+                endcase
+            end
         end
     end
 endmodule

@@ -57,8 +57,8 @@ captured UART data. No separate USB-to-UART wiring is required.
 The Tiny Tapeout carrier-board RP2040/RP2350 still powers and selects the
 `tt_um_tadc_its` project. After the carrier has selected the project and
 released its project I/O, the Cmod A7 controls the ADC `clk` and `EN`, reads
-`CKO` and `DATA[8:0]`, stores the ordered ADC codes, and sends the capture to
-the PC. The FPGA does not calculate conversion timing.
+`CKO` and `DATA[8:0]`, stores each ADC code with a raw 10 MHz timestamp, and
+sends the capture to the PC. Python performs the timing calculations.
 
 The supplied FPGA design does **not** drive Tiny Tapeout's project-selection
 management signals (`ctrl_ena`, `ctrl_sel_inc`, or `ctrl_sel_rst_n`) and does
@@ -202,10 +202,13 @@ The current FPGA design sends only the 1 MHz ADC clock on Cmod A7 PIO3. It does
 currently no external-reference wire between the Cmod A7 and function
 generator.
 
-The FPGA does not measure conversion timing. Python uses the nominal model of
-26 ADC clocks per output sample, or approximately 38.4615 ksample/s with the
-1 MHz ADC clock. If a more accurate sample rate is measured independently,
-provide it to the Python tools with `--sample-rate-hz`.
+The FPGA timestamps every synchronized `CKO` edge with its 10 MHz internal
+counter. Python uses the first-to-last timestamp span to calculate the average
+sampling speed for every capture. The timestamp resolution is 100 ns, while
+averaging over 4095 intervals gives a much finer average-rate estimate.
+
+Absolute accuracy is still limited by the Cmod oscillator. If a calibrated
+sample rate is measured independently, provide it with `--sample-rate-hz`.
 
 Without a shared frequency reference, keep the default Blackman-Harris FFT
 window. The sweep summary uses the programmed function-generator settings as

@@ -20,6 +20,10 @@ from tadc_io import load_capture, save_json, write_capture
 SUMMARY_FIELDS = [
     "point",
     "stimulus_frequency_hz",
+    "measured_sample_rate_hz",
+    "rms_interval_jitter_ns",
+    "timing_stable",
+    "interval_outlier_count",
     "fft_fundamental_frequency_hz",
     "fundamental_amplitude_dbfs",
     "snr_db",
@@ -89,8 +93,18 @@ def write_summary_plot(path: Path, rows: list[dict[str, Any]], logarithmic: bool
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", help="Cmod A7 UART port, for example COM6 or /dev/ttyUSB1")
-    parser.add_argument("--start-hz", type=float, required=True)
-    parser.add_argument("--stop-hz", type=float, required=True)
+    parser.add_argument("--start-hz", type=float)
+    parser.add_argument("--stop-hz", type=float)
+    parser.add_argument(
+        "--center-hz",
+        type=float,
+        help="center of a sweep around an estimated input frequency",
+    )
+    parser.add_argument(
+        "--plus-minus-hz",
+        type=float,
+        help="sweep from center minus this value to center plus this value",
+    )
     parser.add_argument("--points", type=int, default=10)
     parser.add_argument("--spacing", choices=("linear", "log"), default="log")
     parser.add_argument("--output-dir", type=Path, default=Path("fft_sweep"))
@@ -118,7 +132,26 @@ def main() -> int:
         parser.error("--timeout must be greater than zero")
     if args.wait_timeout < 0 or args.settle_seconds < 0:
         parser.error("timeouts and settling delay cannot be negative")
-    frequencies = frequency_points(args.start_hz, args.stop_hz, args.points, args.spacing)
+    using_center = args.center_hz is not None or args.plus_minus_hz is not None
+    using_edges = args.start_hz is not None or args.stop_hz is not None
+    if using_center and using_edges:
+        parser.error("use either start/stop or center/plus-minus, not both")
+    if using_center:
+        if args.center_hz is None or args.plus_minus_hz is None:
+            parser.error("--center-hz and --plus-minus-hz must be supplied together")
+        if args.plus_minus_hz <= 0:
+            parser.error("--plus-minus-hz must be positive")
+        start_hz = args.center_hz - args.plus_minus_hz
+        stop_hz = args.center_hz + args.plus_minus_hz
+    else:
+        if args.start_hz is None or args.stop_hz is None:
+            parser.error("provide --start-hz/--stop-hz or --center-hz/--plus-minus-hz")
+        start_hz = args.start_hz
+        stop_hz = args.stop_hz
+    try:
+        frequencies = frequency_points(start_hz, stop_hz, args.points, args.spacing)
+    except ValueError as error:
+        parser.error(str(error))
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -150,9 +183,8 @@ def main() -> int:
                     stream_timeout_seconds=args.timeout,
                 )
 
-                sample_rate_hz = args.sample_rate_hz or float(
-                    metadata["nominal_sample_rate_hz"]
-                )
+                measured_sample_rate_hz = float(metadata["measured_sample_rate_hz"])
+                sample_rate_hz = args.sample_rate_hz or measured_sample_rate_hz
                 if stimulus_hz >= sample_rate_hz / 2.0:
                     raise ValueError(
                         f"{stimulus_hz:g} Hz is at/above Nyquist "
@@ -179,6 +211,8 @@ def main() -> int:
                 )
                 metrics["stimulus_frequency_hz"] = float(stimulus_hz)
                 metrics["sample_rate_override_used"] = args.sample_rate_hz is not None
+                if args.sample_rate_hz is not None:
+                    metrics["sample_rate_kind"] = "explicit_override"
 
                 report_path = args.output_dir / f"{stem}_fft.json"
                 spectrum_path = args.output_dir / f"{stem}_spectrum.csv"
@@ -191,6 +225,12 @@ def main() -> int:
                 summary = {
                     "point": point,
                     "stimulus_frequency_hz": float(stimulus_hz),
+                    "measured_sample_rate_hz": measured_sample_rate_hz,
+                    "rms_interval_jitter_ns": metadata[
+                        "rms_interval_jitter_seconds"
+                    ] * 1e9,
+                    "timing_stable": metadata["timing_stable"],
+                    "interval_outlier_count": metadata["interval_outlier_count"],
                     "fft_fundamental_frequency_hz": metrics["fundamental_frequency_hz"],
                     "fundamental_amplitude_dbfs": metrics["fundamental_amplitude_dbfs"],
                     "snr_db": metrics["snr_db"],
@@ -206,7 +246,8 @@ def main() -> int:
                 }
                 summary_rows.append(summary)
                 print(
-                    f"Captured: amplitude={summary['fundamental_amplitude_dbfs']:.3f} dBFS, "
+                    f"Fs={summary['measured_sample_rate_hz']:.6f} samples/s, "
+                    f"amplitude={summary['fundamental_amplitude_dbfs']:.3f} dBFS, "
                     f"SINAD={summary['sinad_db']:.3f} dB, "
                     f"ENOB={summary['enob_bits']:.3f} bits"
                 )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive one sample-only TADC capture from the Cmod A7 UART."""
+"""Receive one timestamped TADC capture from the Cmod A7 UART."""
 
 from __future__ import annotations
 
@@ -10,12 +10,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from tadc_io import write_capture
+import numpy as np
+
+from tadc_io import summarize_timing, write_capture
 
 
 HEADER = struct.Struct("<4sBBHII")
-RECORD = struct.Struct("<2sH")
-PROTOCOL_VERSION = 2
+RECORD = struct.Struct("<2sHI")
+PROTOCOL_VERSION = 3
 
 
 def read_exact(port, count: int, timeout_seconds: float) -> bytes:
@@ -86,7 +88,7 @@ def receive_capture(
     stream_timeout_seconds: float = 10.0,
 ) -> tuple[list[dict[str, int]], dict[str, Any]]:
     header_data = find_header(port, wait_timeout_seconds, stream_timeout_seconds)
-    magic, version, record_size, count, adc_hz, clocks_per_sample = HEADER.unpack(
+    magic, version, record_size, count, timer_hz, adc_hz = HEADER.unpack(
         header_data
     )
     if magic != b"TADC":
@@ -100,14 +102,14 @@ def receive_capture(
         raise ValueError(
             f"stream record size is {record_size}, expected {RECORD.size} bytes"
         )
-    if count == 0 or adc_hz == 0 or clocks_per_sample == 0:
+    if count < 2 or timer_hz == 0 or adc_hz == 0:
         raise ValueError("header contains an invalid zero-valued field")
 
     print(f"TADC header received; downloading {count} ADC samples...")
     rows: list[dict[str, int]] = []
     for sequence in range(count):
         raw = read_exact(port, RECORD.size, stream_timeout_seconds)
-        sync, code_flags = RECORD.unpack(raw)
+        sync, code_flags, timestamp = RECORD.unpack(raw)
         if sync != b"\xA5\x5A":
             raise ValueError(f"bad record sync at sample {sequence}")
         if code_flags & ~0x03FF:
@@ -117,19 +119,24 @@ def receive_capture(
                 "sequence": sequence,
                 "adc_code": code_flags & 0x01FF,
                 "unstable": int(bool(code_flags & 0x0200)),
+                "timestamp_ticks": timestamp,
+                "timestamp_us": timestamp * 1e6 / timer_hz,
             }
         )
 
-    sample_rate = float(adc_hz) / float(clocks_per_sample)
+    timing = summarize_timing(
+        np.asarray([row["timestamp_ticks"] for row in rows], dtype=np.int64),
+        float(timer_hz),
+    )
     metadata: dict[str, Any] = {
-        "schema": "tadc-sample-capture-v2",
+        "schema": "tadc-timestamped-capture-v3",
         "format_version": version,
         "record_size_bytes": record_size,
         "record_count": count,
+        "timer_clock_hz": timer_hz,
         "adc_clock_hz": adc_hz,
-        "clocks_per_sample": clocks_per_sample,
-        "nominal_sample_rate_hz": sample_rate,
-        "sample_rate_kind": "nominal_from_adc_clock_division",
+        "sample_rate_kind": "measured_from_cko_timestamps",
+        **timing,
     }
     return rows, metadata
 
@@ -213,7 +220,17 @@ def main() -> int:
     unstable_count = sum(row["unstable"] for row in rows)
     print(f"Received {len(rows)} ADC samples")
     print(f"ADC clock: {metadata['adc_clock_hz']:,} Hz")
-    print(f"Nominal sample rate: {metadata['nominal_sample_rate_hz']:.9f} samples/s")
+    print(f"Measured sample rate: {metadata['measured_sample_rate_hz']:.9f} samples/s")
+    print(
+        "CKO interval ticks: "
+        f"min={metadata['minimum_interval_ticks']}, "
+        f"mean={metadata['mean_interval_ticks']:.6f}, "
+        f"max={metadata['maximum_interval_ticks']}"
+    )
+    print(
+        f"Timing stable: {metadata['timing_stable']} "
+        f"({metadata['interval_outlier_count']} interval outliers)"
+    )
     print(f"Unstable sample flags: {unstable_count}")
     print(f"Saved {args.output.resolve()}")
     print(f"Saved {metadata_path.resolve()}")

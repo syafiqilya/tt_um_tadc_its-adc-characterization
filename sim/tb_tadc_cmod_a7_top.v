@@ -3,7 +3,7 @@
 
 module tb_tadc_cmod_a7_top;
     localparam integer SAMPLE_COUNT = 8;
-    localparam integer TOTAL_BYTES  = 16 + 4 * SAMPLE_COUNT;
+    localparam integer TOTAL_BYTES  = 16 + 8 * SAMPLE_COUNT;
 
     reg clk = 1'b0;
     reg btn_reset = 1'b0;
@@ -21,6 +21,8 @@ module tb_tadc_cmod_a7_top;
     integer generated_code = 0;
     integer i;
     reg [7:0] rx_byte;
+    reg [31:0] current_timestamp;
+    reg [31:0] previous_timestamp;
 
     // Simulation bypasses the MMCM, so clk is already 10 MHz.
     always #50 clk = ~clk;
@@ -99,23 +101,36 @@ module tb_tadc_cmod_a7_top;
             $fatal(1, "stream header magic is wrong");
         end
 
-        if (received[4] !== 8'h02 || received[5] !== 8'd4 ||
+        if (received[4] !== 8'h03 || received[5] !== 8'd8 ||
             received[6] !== SAMPLE_COUNT[7:0]) begin
             $display("FAIL: stream header fields are wrong");
             $fatal(1, "stream header fields are wrong");
         end
 
+        previous_timestamp = 32'd0;
         for (i = 0; i < SAMPLE_COUNT; i = i + 1) begin
-            if (received[16 + i*4] !== 8'ha5 ||
-                received[17 + i*4] !== 8'h5a) begin
+            if (received[16 + i*8] !== 8'ha5 ||
+                received[17 + i*8] !== 8'h5a) begin
                 $display("FAIL: record %0d sync word is wrong", i);
                 $fatal(1, "record sync word is wrong");
             end
-            if (received[18 + i*4] !== (i[7:0] + 8'd1) ||
-                received[19 + i*4] !== 8'h00) begin
+            if (received[18 + i*8] !== (i[7:0] + 8'd1) ||
+                received[19 + i*8] !== 8'h00) begin
                 $display("FAIL: record %0d ADC code is wrong", i);
                 $fatal(1, "record ADC code is wrong");
             end
+            current_timestamp = {
+                received[23 + i*8],
+                received[22 + i*8],
+                received[21 + i*8],
+                received[20 + i*8]
+            };
+            if (i > 0 && current_timestamp - previous_timestamp !== 32'd260) begin
+                $display("FAIL: record %0d timestamp interval is %0d", i,
+                         current_timestamp - previous_timestamp);
+                $fatal(1, "record timestamp interval is wrong");
+            end
+            previous_timestamp = current_timestamp;
         end
 
         $display("PASS: captured and transmitted %0d ADC records", SAMPLE_COUNT);

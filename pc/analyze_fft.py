@@ -123,7 +123,6 @@ def calculate_metrics(
         "schema": "tadc-fft-report-v2",
         "sample_count": int(sample_count),
         "sample_rate_hz": sample_rate_hz,
-        "sample_rate_kind": "nominal_unless_overridden",
         "nyquist_hz": sample_rate_hz / 2.0,
         "bin_width_hz": sample_rate_hz / sample_count,
         "adc_bits": bit_count,
@@ -166,7 +165,7 @@ def write_plot(
             f"TADC FFT | {metrics['window']} window | "
             f"SINAD={metrics['sinad_db']:.2f} dB | ENOB={metrics['enob_bits']:.2f} bits"
         ),
-        xlabel="Frequency (Hz, nominal sample-rate scale)",
+        xlabel="Frequency (Hz, measured sample-rate scale)",
         ylabel="Amplitude (dBFS)",
         xlim=(0, metrics["nyquist_hz"]),
         ylim=(-140, 5),
@@ -201,6 +200,11 @@ def analyze_capture(
         raise ValueError("sequence numbers are not contiguous; FFT ordering is invalid")
     if np.any(capture["unstable"]):
         warnings.warn("capture contains unstable sample flags")
+    if capture["metadata"].get("timing_stable") is False:
+        warnings.warn(
+            "CKO intervals are not stable within one 10 MHz timer tick; "
+            "review the timing report before trusting a conventional FFT"
+        )
 
     expected_bin: int | None = None
     if expected_frequency_hz is not None:
@@ -221,6 +225,13 @@ def analyze_capture(
             "source_csv": str(capture["path"]),
             "expected_frequency_hz": expected_frequency_hz,
             "unstable_sample_count": int(np.count_nonzero(capture["unstable"])),
+            "timing_stable": capture["metadata"].get("timing_stable"),
+            "interval_outlier_count": capture["metadata"].get(
+                "interval_outlier_count"
+            ),
+            "sample_rate_kind": capture["metadata"].get(
+                "sample_rate_kind", "explicit_override_or_derived"
+            ),
         }
     )
     return metrics, frequencies, amplitude_dbfs
@@ -233,7 +244,7 @@ def main() -> int:
     parser.add_argument(
         "--sample-rate-hz",
         type=float,
-        help="override nominal sample rate stored beside the capture",
+        help="override measured sample rate stored beside the capture",
     )
     parser.add_argument("--expected-frequency-hz", type=float)
     parser.add_argument("--bits", type=int, default=9)
@@ -265,6 +276,8 @@ def main() -> int:
         expected_frequency_hz=args.expected_frequency_hz,
         harmonic_count=args.harmonics,
     )
+    if args.sample_rate_hz is not None:
+        metrics["sample_rate_kind"] = "explicit_override"
 
     output = args.output or default_output(args.capture, "_fft.json")
     plot = args.plot or default_output(args.capture, "_fft.png")

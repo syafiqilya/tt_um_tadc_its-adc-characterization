@@ -1,19 +1,20 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-// Sends the capture RAM as TADC UART protocol version 2.
-// The FPGA transmits ADC samples only; it does not transmit timing counters.
+// Sends the capture RAM as TADC UART protocol version 3.
+// Each record contains an ADC sample and its raw CKO timestamp. The PC performs
+// all sample-rate and interval calculations.
 module capture_streamer #(
     parameter integer SAMPLE_COUNT      = 4096,
     parameter integer ADDR_WIDTH        = 12,
-    parameter integer ADC_CLOCK_HZ      = 1_000_000,
-    parameter integer CLOCKS_PER_SAMPLE = 26
+    parameter integer TIMER_CLOCK_HZ    = 10_000_000,
+    parameter integer ADC_CLOCK_HZ      = 1_000_000
 ) (
     input  wire                  clk,
     input  wire                  reset,
     input  wire                  start,
     output reg  [ADDR_WIDTH-1:0] mem_addr,
-    input  wire [9:0]            mem_data,
+    input  wire [41:0]           mem_data,
     output reg                   uart_start,
     output reg  [7:0]            uart_data,
     input  wire                  uart_busy,
@@ -30,14 +31,14 @@ module capture_streamer #(
     localparam ST_FINISH       = 4'd7;
 
     localparam [15:0] SAMPLE_COUNT_VALUE      = SAMPLE_COUNT;
-    localparam [31:0] ADC_CLOCK_VALUE         = ADC_CLOCK_HZ;
-    localparam [31:0] CLOCKS_PER_SAMPLE_VALUE = CLOCKS_PER_SAMPLE;
-    localparam [ADDR_WIDTH-1:0] LAST_RECORD    = SAMPLE_COUNT - 1;
+    localparam [31:0] TIMER_CLOCK_VALUE     = TIMER_CLOCK_HZ;
+    localparam [31:0] ADC_CLOCK_VALUE       = ADC_CLOCK_HZ;
+    localparam [ADDR_WIDTH-1:0] LAST_RECORD = SAMPLE_COUNT - 1;
 
     reg [3:0] state;
     reg [4:0] byte_index;
     reg [ADDR_WIDTH-1:0] record_index;
-    reg [9:0] record_data;
+    reg [41:0] record_data;
 
     function [7:0] header_byte;
         input [4:0] index;
@@ -47,18 +48,18 @@ module capture_streamer #(
                 1:  header_byte = 8'h41; // A
                 2:  header_byte = 8'h44; // D
                 3:  header_byte = 8'h43; // C
-                4:  header_byte = 8'h02; // protocol version
-                5:  header_byte = 8'd4;  // bytes per sample record
+                4:  header_byte = 8'h03; // protocol version
+                5:  header_byte = 8'd8;  // bytes per sample record
                 6:  header_byte = SAMPLE_COUNT_VALUE[7:0];
                 7:  header_byte = SAMPLE_COUNT_VALUE[15:8];
-                8:  header_byte = ADC_CLOCK_VALUE[7:0];
-                9:  header_byte = ADC_CLOCK_VALUE[15:8];
-                10: header_byte = ADC_CLOCK_VALUE[23:16];
-                11: header_byte = ADC_CLOCK_VALUE[31:24];
-                12: header_byte = CLOCKS_PER_SAMPLE_VALUE[7:0];
-                13: header_byte = CLOCKS_PER_SAMPLE_VALUE[15:8];
-                14: header_byte = CLOCKS_PER_SAMPLE_VALUE[23:16];
-                15: header_byte = CLOCKS_PER_SAMPLE_VALUE[31:24];
+                8:  header_byte = TIMER_CLOCK_VALUE[7:0];
+                9:  header_byte = TIMER_CLOCK_VALUE[15:8];
+                10: header_byte = TIMER_CLOCK_VALUE[23:16];
+                11: header_byte = TIMER_CLOCK_VALUE[31:24];
+                12: header_byte = ADC_CLOCK_VALUE[7:0];
+                13: header_byte = ADC_CLOCK_VALUE[15:8];
+                14: header_byte = ADC_CLOCK_VALUE[23:16];
+                15: header_byte = ADC_CLOCK_VALUE[31:24];
                 default: header_byte = 8'h00;
             endcase
         end
@@ -66,13 +67,17 @@ module capture_streamer #(
 
     function [7:0] record_byte;
         input [2:0] index;
-        input [9:0] sample;
+        input [41:0] sample;
         begin
             case (index)
                 0: record_byte = 8'hA5;
                 1: record_byte = 8'h5A;
                 2: record_byte = sample[7:0];
                 3: record_byte = {6'd0, sample[9:8]};
+                4: record_byte = sample[17:10];
+                5: record_byte = sample[25:18];
+                6: record_byte = sample[33:26];
+                7: record_byte = sample[41:34];
                 default: record_byte = 8'h00;
             endcase
         end
@@ -85,7 +90,7 @@ module capture_streamer #(
             state        <= ST_IDLE;
             byte_index   <= 5'd0;
             record_index <= {ADDR_WIDTH{1'b0}};
-            record_data  <= 10'd0;
+            record_data  <= 42'd0;
             mem_addr     <= {ADDR_WIDTH{1'b0}};
             uart_data    <= 8'd0;
             busy         <= 1'b0;
@@ -134,7 +139,7 @@ module capture_streamer #(
                     if (!uart_busy && !uart_start) begin
                         uart_data  <= record_byte(byte_index[2:0], record_data);
                         uart_start <= 1'b1;
-                        if (byte_index == 3)
+                        if (byte_index == 7)
                             state <= ST_RECORD_DRAIN;
                         else
                             byte_index <= byte_index + 1'b1;
