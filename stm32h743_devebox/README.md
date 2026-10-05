@@ -21,6 +21,9 @@ TADC protocol version 3, so the existing `pc/capture_tadc.py`,
 
 ## Tiny Tapeout wiring
 
+See the complete [connection schematic](SCHEMATIC.md) and its printable
+[SVG diagram](stm32_tinytapeout_schematic.svg).
+
 Connect ground first. Do not connect the two boards' 3.3 V power outputs.
 
 | DevEBox signal | Header location | Direction | Tiny Tapeout signal |

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="940" viewBox="0 0 1400 940">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#243447"/>
+    </marker>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #14213d; }
+      .subtitle { font: 16px Arial, sans-serif; fill: #455a64; }
+      .box-title { font: 700 22px Arial, sans-serif; fill: #ffffff; }
+      .label { font: 16px Consolas, monospace; fill: #17202a; }
+      .small { font: 14px Arial, sans-serif; fill: #37474f; }
+      .note { font: 15px Arial, sans-serif; fill: #5d4037; }
+      .wire { stroke: #243447; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .bus { stroke: #00695c; stroke-width: 6; fill: none; marker-end: url(#arrow); }
+      .power { stroke: #c62828; stroke-width: 3; fill: none; }
+      .ground { stroke: #263238; stroke-width: 3; fill: none; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="940" fill="#f7f9fb"/>
+  <text x="700" y="48" text-anchor="middle" class="title">STM32H743 DevEBox ↔ Tiny Tapeout TADC</text>
+  <text x="700" y="76" text-anchor="middle" class="subtitle">Timestamped capture, 1 MHz ADC clock, native USB CDC</text>
+
+  <rect x="70" y="120" width="430" height="660" rx="20" fill="#1565c0" stroke="#0d47a1" stroke-width="3"/>
+  <rect x="900" y="120" width="430" height="660" rx="20" fill="#6a1b9a" stroke="#4a148c" stroke-width="3"/>
+  <text x="285" y="165" text-anchor="middle" class="box-title">STM32H743VIT6 DevEBox</text>
+  <text x="1115" y="165" text-anchor="middle" class="box-title">Tiny Tapeout Carrier + TADC</text>
+
+  <rect x="105" y="205" width="360" height="86" rx="10" fill="#e3f2fd"/>
+  <text x="125" y="235" class="label">J5 USB: PA11 D− / PA12 D+</text>
+  <text x="125" y="263" class="small">Power + native USB CDC to PC</text>
+
+  <rect x="105" y="325" width="360" height="390" rx="10" fill="#e8eaf6"/>
+  <text x="125" y="360" class="label">PA6 / TIM3_CH1   ADC_CLK</text>
+  <text x="125" y="400" class="label">PC0              ADC_EN</text>
+  <text x="125" y="450" class="label">PA0 / TIM2_CH1   CKO</text>
+  <text x="125" y="505" class="label">PE15..PE7        DATA[8:0]</text>
+  <text x="125" y="565" class="label">PE3 / K1         START</text>
+  <text x="125" y="605" class="label">PA1 / D2         STATUS</text>
+  <text x="125" y="670" class="label">GND              COMMON</text>
+
+  <rect x="935" y="205" width="360" height="510" rx="10" fill="#f3e5f5"/>
+  <text x="955" y="250" class="label">Project clk</text>
+  <text x="955" y="310" class="label">ui_in[0] / EN</text>
+  <text x="955" y="380" class="label">uo_out[0] / CKO</text>
+  <text x="955" y="450" class="label">uo_out[1..7]</text>
+  <text x="955" y="480" class="small">DATA[8..2]</text>
+  <text x="955" y="535" class="label">uio[0..1]</text>
+  <text x="955" y="565" class="small">DATA[1..0]</text>
+  <text x="955" y="650" class="label">GND</text>
+
+  <path d="M465 355 L615 355" class="wire"/>
+  <rect x="620" y="337" width="80" height="36" fill="#fff8e1" stroke="#f9a825" stroke-width="2"/>
+  <text x="660" y="361" text-anchor="middle" class="small">47 Ω</text>
+  <path d="M700 355 L935 250" class="wire"/>
+
+  <path d="M465 395 L615 395" class="wire"/>
+  <rect x="620" y="377" width="80" height="36" fill="#fff8e1" stroke="#f9a825" stroke-width="2"/>
+  <text x="660" y="401" text-anchor="middle" class="small">47 Ω</text>
+  <path d="M700 395 L935 310" class="wire"/>
+
+  <path d="M935 380 L465 450" class="wire"/>
+  <text x="700" y="425" text-anchor="middle" class="small">hardware input capture</text>
+
+  <path d="M935 455 L465 505" class="bus"/>
+  <text x="700" y="495" text-anchor="middle" class="small">9-bit parallel bus, one GPIOE read</text>
+
+  <path d="M465 670 L935 650" class="ground"/>
+  <text x="700" y="685" text-anchor="middle" class="small">COMMON GROUND — CONNECT FIRST</text>
+
+  <rect x="530" y="725" width="340" height="105" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+  <text x="700" y="758" text-anchor="middle" class="note">Separate USB power for each board</text>
+  <text x="700" y="786" text-anchor="middle" class="note">Do not connect 3.3 V or 5 V rails together</text>
+  <text x="700" y="814" text-anchor="middle" class="note">Carrier must be in ASIC_MANUAL_INPUTS</text>
+
+  <rect x="900" y="800" width="430" height="105" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="920" y="832" class="label">Analog stimulus (not through STM32)</text>
+  <text x="920" y="860" class="small">VCM = quiet 0.9 V; VIP = CH1 0°; VIN = CH2 180°</text>
+  <text x="920" y="886" class="small">Keep every analog input between 0 V and 1.8 V</text>
+
+  <rect x="70" y="820" width="390" height="85" rx="12" fill="#fff3e0" stroke="#ef6c00" stroke-width="2"/>
+  <text x="90" y="852" class="label">Optional fail-safe pull-downs</text>
+  <text x="90" y="880" class="small">10 kΩ from TT clk and EN to GND</text>
+</svg>

@@ -12,6 +12,8 @@ values. It only captures raw timestamps alongside the ADC data.
 An alternative STM32H743VIT6 DevEBox controller is provided in
 [`stm32h743_devebox`](stm32h743_devebox/README.md). It uses hardware timer input
 capture and emits the same protocol-v3 stream, so all PC tools are shared.
+Its [connection schematic](stm32h743_devebox/SCHEMATIC.md) shows the complete
+board-to-board wiring and power rules.
 
 ## Architecture
 
