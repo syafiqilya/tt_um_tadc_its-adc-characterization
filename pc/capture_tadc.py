@@ -76,8 +76,8 @@ def find_header(
                 )
             else:
                 print(
-                    "Still waiting; no UART bytes received. Press BTN1 and check "
-                    "LED1/LED2, the serial port, and ADC CKO wiring."
+                    "Still waiting; no bytes received. Press the controller's "
+                    "start button and check its status LED, serial port, and CKO wiring."
                 )
             next_status = now + status_interval_seconds
 
@@ -160,15 +160,15 @@ def print_serial_ports() -> int:
 def print_no_data_help() -> None:
     print("", file=sys.stderr)
     print("Hardware checks:", file=sys.stderr)
-    print("  LED1 never turns on: check BTN1, bitstream, or FPGA clock.", file=sys.stderr)
-    print("  LED1 stays on: the FPGA is waiting for 4096 ADC CKO events.", file=sys.stderr)
-    print("  LED2 turns on: capture completed; check port and 1,000,000 baud.", file=sys.stderr)
+    print("  No capture indication: check start button, firmware/bitstream, and clock.", file=sys.stderr)
+    print("  Capture indication stays active: waiting for 4096 ADC CKO events.", file=sys.stderr)
+    print("  Capture completes: check the selected UART or USB CDC port.", file=sys.stderr)
     print("  Confirm Tiny Tapeout manual-input mode and common ground.", file=sys.stderr)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("port", nargs="?", help="COM6 or /dev/ttyUSB1")
+    parser.add_argument("port", nargs="?", help="COM6, /dev/ttyUSB1, or /dev/ttyACM0")
     parser.add_argument("--list-ports", action="store_true")
     parser.add_argument("-o", "--output", type=Path, default=Path("tadc_capture.csv"))
     parser.add_argument("--metadata", type=Path)
@@ -195,7 +195,7 @@ def main() -> int:
     try:
         with serial.Serial(args.port, args.baud, timeout=0.25) as port:
             print(f"Opened {args.port} at {args.baud:,} baud.")
-            print("Waiting for TADC samples; press BTN1 on the Cmod A7...")
+            print("Waiting for TADC samples; press the controller start button...")
             rows, metadata = receive_capture(
                 port,
                 wait_timeout_seconds=args.wait_timeout,

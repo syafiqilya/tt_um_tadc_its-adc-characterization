@@ -92,7 +92,10 @@ def write_summary_plot(path: Path, rows: list[dict[str, Any]], logarithmic: bool
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("port", help="Cmod A7 UART port, for example COM6 or /dev/ttyUSB1")
+    parser.add_argument(
+        "port",
+        help="controller serial port, for example COM6, /dev/ttyUSB1, or /dev/ttyACM0",
+    )
     parser.add_argument("--start-hz", type=float)
     parser.add_argument("--stop-hz", type=float)
     parser.add_argument(
@@ -176,7 +179,7 @@ def main() -> int:
                     )
                 if args.settle_seconds:
                     time.sleep(args.settle_seconds)
-                print("Press BTN1 on the Cmod A7; waiting for the sample block...")
+                print("Press the controller start button; waiting for the sample block...")
                 rows, metadata = receive_capture(
                     port,
                     wait_timeout_seconds=args.wait_timeout,
