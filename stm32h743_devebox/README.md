@@ -5,6 +5,69 @@ STM32H743VIT6 board. It uses STM32Cube HAL and USB Device CDC while preserving
 TADC protocol version 3, so the existing `pc/capture_tadc.py`,
 `pc/analyze_fft.py`, and `pc/fft_frequency_sweep.py` programs work unchanged.
 
+## Build status and ready-to-flash files
+
+This is now a complete CMake firmware project, not only an application module.
+It was successfully compiled and linked with GNU Arm Embedded 14.3.1 against
+STM32CubeH7 commit `8ec3113d4039d30ba9dc2bf0cb6eefc756b48d06`.
+
+Ready-to-flash files are in [`firmware`](firmware):
+
+- `tadc_stm32h743_devebox.hex` — recommended for STM32CubeProgrammer;
+- `tadc_stm32h743_devebox.bin` — program at address `0x08000000`;
+- `tadc_stm32h743_devebox.elf` — symbols and debugging;
+- `SHA256SUMS.txt` — integrity hashes.
+
+The build uses 27,104 bytes of flash image and 46,768 bytes of RAM. Compilation
+and static ELF checks passed. The image has not yet been electrically tested on
+the physical DevEBox/Tiny Tapeout setup, so first power-up should still include
+the voltage and idle-level checks in `SCHEMATIC.md`.
+
+STM32CubeIDE is not required to use these files. Install STM32CubeProgrammer to
+flash the HEX through an external ST-LINK. CubeIDE is useful if you want GUI
+debugging or to modify the firmware.
+
+## Rebuild from source
+
+Install CMake, Ninja, and the GNU Arm Embedded toolchain, then obtain ST's
+STM32CubeH7 repository with its submodules:
+
+```bash
+git clone --recursive https://github.com/STMicroelectronics/STM32CubeH7.git
+git -C STM32CubeH7 checkout 8ec3113d4039d30ba9dc2bf0cb6eefc756b48d06
+git -C STM32CubeH7 submodule update --init --recursive
+```
+
+From this repository's root, configure and build:
+
+```bash
+cmake -S stm32h743_devebox -B stm32h743_devebox/build -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/stm32h743_devebox/cmake/arm-none-eabi-gcc.cmake" \
+  -DSTM32CUBEH7_PATH=/path/to/STM32CubeH7 \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build stm32h743_devebox/build
+```
+
+The build produces `.elf`, `.hex`, `.bin`, and `.map` files in the selected
+build directory. The ST-derived platform files included here are covered by
+[`STM32CubeH7_LICENSE.md`](STM32CubeH7_LICENSE.md).
+
+## Flash the compiled firmware
+
+The DevEBox does not provide an onboard ST-LINK. Connect an external ST-LINK
+to `SWDIO`/PA13, `SWCLK`/PA14, GND, and preferably NRST. Connect VTref to the
+board's 3.3 V rail as a voltage reference; do not connect two power sources.
+
+In STM32CubeProgrammer:
+
+1. Select ST-LINK and connect to the target.
+2. Open `firmware/tadc_stm32h743_devebox.hex`.
+3. Select **Download**, with verification enabled.
+4. Disconnect the programmer and reset the board.
+
+If using the raw BIN instead, set the start address to `0x08000000`. The HEX
+already contains its flash address and is therefore less error-prone.
+
 ## Hardware architecture
 
 - TIM3 CH1 produces the 1 MHz ADC clock on PA6.
@@ -49,9 +112,10 @@ Before connecting PA6 or PC0, select `tt_um_tadc_its`, stop the carrier clock,
 and put the Tiny Tapeout carrier in `ASIC_MANUAL_INPUTS` as described in the
 repository's main `WIRING.md`.
 
-## STM32CubeMX configuration
+## Implemented peripheral configuration
 
-Create a project for `STM32H743VITx`, then use the settings below.
+The checked-in startup and initialization code implements the settings below.
+Use the same settings if you later regenerate the project with CubeMX.
 
 ### Clock tree
 
@@ -97,18 +161,18 @@ The firmware constants assume these timer clocks. With a 200 MHz timer clock:
 
 ### USB
 
-- Enable `USB_OTG_HS` in Device Only mode with the internal full-speed PHY.
+- Enable `USB_OTG_FS` in Device Only mode.
 - PA11 is USB D- and PA12 is USB D+ through the board's J5 connector.
 - Enable USB Device middleware and select CDC class.
 - Keep USB DMA disabled unless cache-coherency handling is added.
-- CubeMX should generate `hUsbDeviceHS` and `CDC_Transmit_HS()`.
+- The checked-in code uses `hUsbDeviceFS` and `CDC_Transmit_FS()`.
 
-## Add the application to the generated project
+## Optional CubeMX regeneration
 
-Copy:
+If you create a fresh CubeMX/CubeIDE project, copy:
 
-- `Core/Inc/tadc_capture.h` into the generated `Core/Inc` directory;
-- `Core/Src/tadc_capture.c` into the generated `Core/Src` directory.
+- `Core/Inc/tadc_capture.h` into its `Core/Inc` directory;
+- `Core/Src/tadc_capture.c` into its `Core/Src` directory.
 
 In the generated `main.c`, add:
 
@@ -165,9 +229,8 @@ uses that measured rate for FFT analysis.
 - Absolute rate accuracy is limited by the board's 25 MHz oscillator and PLL.
 - The board's USB 5 V rail has no input-power isolation. Do not power the board
   simultaneously from J5 USB and an external 5 V source.
-- `tadc_capture.c` expects the CubeMX-generated USB HS-device names
-  `hUsbDeviceHS` and `CDC_Transmit_HS`. If CubeMX generates FS names, change
-  those two identifiers consistently.
+- The binary is compiled for the DevEBox 25 MHz HSE. Do not use it unchanged on
+  a board with a different oscillator.
 
 ## References
 

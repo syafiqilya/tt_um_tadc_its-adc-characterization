@@ -44,7 +44,7 @@
 
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
-extern USBD_HandleTypeDef hUsbDeviceHS;
+extern USBD_HandleTypeDef hUsbDeviceFS;
 
 typedef struct {
     uint32_t timestamp;
@@ -133,18 +133,18 @@ static bool usb_is_configured_and_idle(void)
 {
     USBD_CDC_HandleTypeDef *cdc;
 
-    if (hUsbDeviceHS.dev_state != USBD_STATE_CONFIGURED ||
-        hUsbDeviceHS.pClassData == NULL) {
+    if (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED ||
+        hUsbDeviceFS.pClassData == NULL) {
         return false;
     }
 
-    cdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceHS.pClassData;
+    cdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
     return cdc->TxState == 0U;
 }
 
 static bool usb_transmit(uint8_t *data, uint16_t length)
 {
-    return CDC_Transmit_HS(data, length) == USBD_OK;
+    return CDC_Transmit_FS(data, length) == USBD_OK;
 }
 
 static void stream_task(void)

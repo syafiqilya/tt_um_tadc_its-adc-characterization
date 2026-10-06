@@ -1,6 +1,7 @@
 # Vivado generated files and directories
 .Xil/
 build/
+stm32h743_devebox/build*/
 *.cache/
 *.gen/
 *.hw/

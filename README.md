@@ -14,6 +14,8 @@ An alternative STM32H743VIT6 DevEBox controller is provided in
 capture and emits the same protocol-v3 stream, so all PC tools are shared.
 Its [connection schematic](stm32h743_devebox/SCHEMATIC.md) shows the complete
 board-to-board wiring and power rules.
+Precompiled `.hex`, `.bin`, and `.elf` images are available in the
+[`stm32h743_devebox/firmware`](stm32h743_devebox/firmware) directory.
 
 ## Architecture
 
